@@ -8,30 +8,30 @@ and provides utilities for generating dynamic filenames.
 # Common CSV files present in both main_dataset and sub_dataset
 # Key: CSV filename, Value: ID column name
 common_csvs = {
-    "biomarker_test_detail.csv": "biomarker_detail_id",
+    "biomarker_test_detail.csv": "", # Doesn't exist
     "biomarker.csv": "biomarker_id",
-    "biomarkers_genes.csv": "biomarker_gene_id",
-    "demographics.csv": "",
-    "disease_characteristic.csv": "",
-    "disease_characteristics_primary_site.csv": "primary_site_id",
-    "disease_characteristics_progression_site.csv": "",
-    "disease_characteristics_progression.csv": "",
-    "family_history_biological_father.csv": "task_id",
-    "family_history_biological_mother.csv": "task_id",
-    "family_history_biological_siblings_intro.csv": "task_id",
-    "family_history_biological_siblings.csv": "task_id",
-    "family_history_cancer.csv": "family_history_id",
-    "family_history_other_family_members_relatives.csv": "task_id",
-    "family_history_other_family_members.csv": "task_id",
-    "family_history_you.csv": "task_id",
+    "biomarkers_genes.csv": "", # Doesn't exist
+    "demographics.csv": "", # Doesn't exist
+    "disease_characteristic.csv": "", # Doesn't exist
+    "disease_characteristics_primary_site.csv": "", # Doesn't exist
+    "disease_characteristics_progression_site.csv": "", # Doesn't exist
+    "disease_characteristics_progression.csv": "", # Doesn't exist
+    "family_history_biological_father.csv": "", # Doesn't exist
+    "family_history_biological_mother.csv": "", # Doesn't exist
+    "family_history_biological_siblings_intro.csv": "", # Doesn't exist
+    "family_history_biological_siblings.csv": "", # Doesn't exist
+    "family_history_cancer.csv": "", # Doesn't exist
+    "family_history_other_family_members_relatives.csv": "", # Doesn't exist
+    "family_history_other_family_members.csv": "", # Doesn't exist
+    "family_history_you.csv": "", # Doesn't exist
     "imaging.csv": "imaging_id",
     "lab.csv": "lab_id",
-    "med_list.csv": "med_id",
-    "patient_enrollment_status.csv": "patient_id",
-    "patient_profile_cancer_info.csv": "task_id",
-    "patient_profile_contact_info.csv": "task_id",
-    "patient_profile_eligibility.csv": "task_id",
-    "patient_profile_more_about_you.csv": "task_id",
+    "med_list.csv": "", # Doesn't exist
+    "patient_enrollment_status.csv": "", # Doesn't exist
+    "patient_profile_cancer_info.csv": "", # Doesn't exist
+    "patient_profile_contact_info.csv": "", # Doesn't exist
+    "patient_profile_eligibility.csv": "", # Doesn't exist
+    "patient_profile_more_about_you.csv": "", # Doesn't exist
     "patient_profile_provider_info.csv": "task_id",
     "patient_profile_supplemental_about_you.csv": "task_id",
     "payor.csv": "payor_id",
