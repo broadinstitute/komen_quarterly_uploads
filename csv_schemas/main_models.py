@@ -7,7 +7,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 # Import all models from sub_models
-from sub_models import (
+from .sub_models import (
     Demographics,
     Biomarker,
     BiomarkerTestDetail,
