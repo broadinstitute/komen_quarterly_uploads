@@ -14,7 +14,6 @@ from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 
-from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest
 from ops_utils.token_util import Token
 
@@ -311,8 +310,6 @@ def main():
 
     # Process sub workspaces and get file manifest
     file_manifest = process_sub_workspaces(sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir)
-    # Copy sequencing files to their destination buckets
-    GCPCloudFunctions().multithread_copy_of_files_with_validation(files_to_copy=file_manifest)
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
