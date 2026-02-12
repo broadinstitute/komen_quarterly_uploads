@@ -2,10 +2,10 @@
 
 import logging
 import re
-import csv
 from typing import Dict, List
 from pathlib import Path
 
+from ops_utils.csv_util import Csv
 from csv_schemas import main_csvs, get_sub_list_with_research_metadata_file
 from models import SFTPDatasetInfo
 
@@ -44,12 +44,11 @@ class DatasetValidator:
         Returns:
             Dictionary with column names as keys and values from first data row
         """
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            # Read first row (should only be one row in metadata file)
-            for row in reader:
-                return row
-        return {}
+        # Read CSV as list of dicts using Csv utility with comma delimiter
+        metadata_list = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
+
+        # Return first row if exists, otherwise empty dict
+        return metadata_list[0] if metadata_list else {}
 
     @staticmethod
     def validate_csv_files(directory_name: str, expected_files: List[str], actual_files: List[str]) -> bool:
