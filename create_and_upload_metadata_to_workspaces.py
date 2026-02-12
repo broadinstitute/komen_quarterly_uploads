@@ -6,16 +6,16 @@ transforms and uploads CSV data, and generates sequencing file manifests.
 """
 
 import logging
-import csv
 import tempfile
 import shutil
-from typing import Dict, Set, List
+from typing import Dict, List
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 
 from ops_utils.request_util import RunRequest
 from ops_utils.token_util import Token
+from ops_utils.csv_util import Csv
 
 from models import SFTPDatasetInfo, WorkspaceInfo
 from validation import DatasetValidator
@@ -60,10 +60,6 @@ def process_main_workspace(
     if not sftp_info.main_dataset_path or MAIN_WORKSPACE_NAME not in workspace_info:
         return
 
-    logging.info("=" * 60)
-    logging.info(f"Processing main workspace: {MAIN_WORKSPACE_NAME}")
-    logging.info("=" * 60)
-
     main_info = workspace_info[MAIN_WORKSPACE_NAME]
     main_csv_dir = Path(sftp_info.main_dataset_path)
     tsv_files = []
@@ -92,17 +88,28 @@ def process_main_workspace(
         sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
 
         # Create master list with proper bucket paths
-        with open(sequencing_tsv_path, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f, delimiter='\t')
-            writer.writerow(['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf'])
+        sequencing_data = []
+        for idx, participant_id in enumerate(sorted(all_participants), start=1):
+            workspace_name = participant_to_workspace.get(participant_id, '')
+            sub_bucket = participant_to_bucket.get(participant_id, '')
+            cram_path = f"{sub_bucket}cram/{participant_id}.cram"
+            crai_path = f"{sub_bucket}cram/{participant_id}.cram.crai"
+            gvcf_path = f"{sub_bucket}gvcf/{participant_id}.g.vcf.gz"
+            sequencing_data.append({
+                'entity:sequencing_files_id': str(idx),
+                'participant_id': participant_id,
+                'workspace_name': workspace_name,
+                'cram': cram_path,
+                'crai': crai_path,
+                'gvcf': gvcf_path
+            })
 
-            for idx, participant_id in enumerate(sorted(all_participants), start=1):
-                workspace_name = participant_to_workspace.get(participant_id, '')
-                sub_bucket = participant_to_bucket.get(participant_id, '')
-                cram_path = f"{sub_bucket}cram/{participant_id}.cram"
-                crai_path = f"{sub_bucket}cram/{participant_id}.cram.crai"
-                gvcf_path = f"{sub_bucket}gvcf/{participant_id}.g.vcf.gz"
-                writer.writerow([str(idx), participant_id, workspace_name, cram_path, crai_path, gvcf_path])
+        # Create TSV using Csv utility
+        header_list = ['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf']
+        Csv(file_path=str(sequencing_tsv_path), delimiter='\t').create_tsv_from_list_of_dicts(
+            list_of_dicts=sequencing_data,
+            header_list=header_list
+        )
 
         tsv_files.append(str(sequencing_tsv_path))
         logging.info(f"Created master sequencing files TSV with {len(all_participants)} participants")
@@ -155,10 +162,6 @@ def process_sub_workspaces(
             continue
 
         ws_info = workspace_info[workspace_name]
-
-        logging.info("=" * 60)
-        logging.info(f"Processing sub workspace: {workspace_name}")
-        logging.info("=" * 60)
 
         csv_dir = Path(sub_dir_info.csv_directory_path)
         tsv_files = []
@@ -313,29 +316,15 @@ def main():
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
-    logging.info(f"Cleaned up temp directory: {temp_dir}")
 
-    # Log summary
-    logging.info("=" * 60)
-    logging.info("PROCESSING COMPLETE")
-    logging.info("=" * 60)
     logging.info(f"Successfully processed {len(workspaces)} workspace(s)")
-    for ws_name, ws_info in workspace_info.items():
-        if ws_name == MAIN_WORKSPACE_NAME:
-            total_participants = sum(len(w.participants) for w in workspace_info.values() if w.workspace_name != MAIN_WORKSPACE_NAME)
-            logging.info(f"  {ws_name}: {total_participants} total participants (master list)")
-        else:
-            logging.info(f"  {ws_name}: {len(ws_info.participants)} participants")
 
-    # Log file manifest
-    logging.info("=" * 60)
-    logging.info("FILE MANIFEST")
-    logging.info("=" * 60)
-    logging.info(f"Total files to transfer: {len(file_manifest)}")
-    for i, entry in enumerate(file_manifest[:10], 1):  # Show first 10 as example
-        logging.info(f"  {i}. {entry['source_file']} -> {entry['full_destination_path']}")
-    if len(file_manifest) > 10:
-        logging.info(f"  ... and {len(file_manifest) - 10} more files")
+    # Write file manifest using Csv utility
+    Csv(file_path='file_manifest.tsv', delimiter='\t').create_tsv_from_list_of_dicts(
+        list_of_dicts=file_manifest,
+        header_list=['source_file', 'full_destination_path']
+    )
+    logging.info(f"Created file manifest with {len(file_manifest)} entries")
 
     return file_manifest
 

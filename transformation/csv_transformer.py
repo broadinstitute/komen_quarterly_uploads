@@ -5,13 +5,11 @@ import csv
 from typing import Optional, Set, Dict
 from pathlib import Path
 
+from ops_utils.csv_util import Csv
+
 
 class CSVTransformer:
     """Handles CSV transformations and adjustments before upload."""
-
-    def __init__(self):
-        """Initialize CSVTransformer."""
-        pass
 
     @staticmethod
     def get_entity_column_name(csv_filename: str) -> str:
@@ -92,18 +90,19 @@ class CSVTransformer:
         """
         participant_ids = set()
 
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
+        # Read CSV as list of dicts using Csv utility with comma delimiter
+        csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
 
-            # Check if patient_id column exists
-            if patient_id_column not in reader.fieldnames:
-                logging.warning(f"Column '{patient_id_column}' not found in {csv_path}")
-                return participant_ids
+        # Check if patient_id column exists
+        if csv_data and patient_id_column not in csv_data[0]:
+            logging.warning(f"Column '{patient_id_column}' not found in {csv_path}")
+            return participant_ids
 
-            for row in reader:
-                patient_id = row.get(patient_id_column, '').strip()
-                if patient_id:
-                    participant_ids.add(patient_id)
+        # Extract participant IDs
+        for row in csv_data:
+            patient_id = row.get(patient_id_column, '').strip()
+            if patient_id:
+                participant_ids.add(patient_id)
 
         logging.info(f"Extracted {len(participant_ids)} participant IDs from {Path(csv_path).name}")
         return participant_ids
@@ -144,13 +143,20 @@ class CSVTransformer:
         Returns:
             True if successful
         """
-        with open(csv_path, 'r', encoding='utf-8') as infile:
-            reader = csv.reader(infile)
+        # Read CSV as list of dicts with comma delimiter
+        csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
 
-            with open(output_path, 'w', encoding='utf-8', newline='') as outfile:
-                writer = csv.writer(outfile, delimiter='\t')
-                for row in reader:
-                    writer.writerow(row)
+        # Get headers from first row or empty list
+        if csv_data:
+            header_list = list(csv_data[0].keys())
+        else:
+            csv_data = []
+
+        # Write as TSV with tab delimiter
+        Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
+            list_of_dicts=csv_data,
+            header_list=header_list
+        )
 
         logging.info(f"Converted {Path(csv_path).name} to TSV: {Path(output_path).name}")
         return True
@@ -205,32 +211,50 @@ class CSVTransformer:
         Returns:
             Path to created TSV file
         """
-        with open(output_path, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f, delimiter='\t')
+        sequencing_data = []
 
-            # Write header
+        # Create rows for each participant
+        for idx, participant_id in enumerate(sorted(participants), start=1):
             if is_main:
-                writer.writerow(['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf'])
+                # Main workspace: point to files in sub workspaces
+                workspace_name = source_workspaces.get(participant_id, '') if source_workspaces else ''
+                # Files live in sub workspace buckets
+                sub_workspace_bucket = workspace_bucket  # This will be set properly in caller
+                cram_path = f"{sub_workspace_bucket}cram/{participant_id}.cram"
+                crai_path = f"{sub_workspace_bucket}cram/{participant_id}.cram.crai"
+                gvcf_path = f"{sub_workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
+                sequencing_data.append({
+                    'entity:sequencing_files_id': str(idx),
+                    'participant_id': participant_id,
+                    'workspace_name': workspace_name,
+                    'cram': cram_path,
+                    'crai': crai_path,
+                    'gvcf': gvcf_path
+                })
             else:
-                writer.writerow(['entity:sequencing_files_id', 'participant_id', 'cram', 'crai', 'gvcf'])
+                # Sub workspace: files in this workspace's bucket
+                cram_path = f"{workspace_bucket}cram/{participant_id}.cram"
+                crai_path = f"{workspace_bucket}cram/{participant_id}.cram.crai"
+                gvcf_path = f"{workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
+                sequencing_data.append({
+                    'entity:sequencing_files_id': str(idx),
+                    'participant_id': participant_id,
+                    'cram': cram_path,
+                    'crai': crai_path,
+                    'gvcf': gvcf_path
+                })
 
-            # Write rows for each participant
-            for idx, participant_id in enumerate(sorted(participants), start=1):
-                if is_main:
-                    # Main workspace: point to files in sub workspaces
-                    workspace_name = source_workspaces.get(participant_id, '') if source_workspaces else ''
-                    # Files live in sub workspace buckets
-                    sub_workspace_bucket = workspace_bucket  # This will be set properly in caller
-                    cram_path = f"{sub_workspace_bucket}cram/{participant_id}.cram"
-                    crai_path = f"{sub_workspace_bucket}cram/{participant_id}.cram.crai"
-                    gvcf_path = f"{sub_workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
-                    writer.writerow([str(idx), participant_id, workspace_name, cram_path, crai_path, gvcf_path])
-                else:
-                    # Sub workspace: files in this workspace's bucket
-                    cram_path = f"{workspace_bucket}cram/{participant_id}.cram"
-                    crai_path = f"{workspace_bucket}cram/{participant_id}.cram.crai"
-                    gvcf_path = f"{workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
-                    writer.writerow([str(idx), participant_id, cram_path, crai_path, gvcf_path])
+        # Define headers based on is_main
+        if is_main:
+            header_list = ['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf']
+        else:
+            header_list = ['entity:sequencing_files_id', 'participant_id', 'cram', 'crai', 'gvcf']
+
+        # Create TSV using Csv utility
+        Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
+            list_of_dicts=sequencing_data,
+            header_list=header_list
+        )
 
         logging.info(f"Created sequencing files TSV with {len(participants)} participants: {output_path}")
         return output_path
