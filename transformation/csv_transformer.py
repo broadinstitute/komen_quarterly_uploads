@@ -150,10 +150,6 @@ class CSVTransformer:
         if csv_data:
             header_list = list(csv_data[0].keys())
         else:
-            # If no data, just read headers from file
-            with open(csv_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                header_list = list(reader.fieldnames or [])
             csv_data = []
 
         # Write as TSV with tab delimiter
