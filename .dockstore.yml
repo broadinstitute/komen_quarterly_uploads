@@ -1,0 +1,8 @@
+version: 1.2
+workflows:
+  - name: IngestKomenSamples
+    subclass: WDL
+    primaryDescriptorPath: /wdl/IngestKomenSamples.wdl
+    readMePath: /wdl/README.md
+    testParameterFiles:
+      - /wdl/IngestKomenSamples.wdl
