@@ -13,12 +13,6 @@ workflow IngestKomenSamples {
 			continue_if_workspace_exists = continue_if_workspace_exists,
 			docker_name = docker_name
 	}
-
-	call CopyFilesToDestination {
-		input:
-			file_manifest_tsv = CreateWorkspacesAndUploadMetadata.file_manifest_tsv,
-			docker_name = docker_name
-	}
 }
 
 task CreateWorkspacesAndUploadMetadata {
@@ -30,27 +24,6 @@ task CreateWorkspacesAndUploadMetadata {
 	command <<<
 		python /app/create_and_upload_metadata_to_workspaces.py \
 			~{if continue_if_workspace_exists then "--continue_if_workspace_exists" else ""}
-	>>>
-
-	output {
-		File file_manifest_tsv = "file_manifest.tsv"
-	}
-
-	runtime {
-		docker: docker_name
-	}
-}
-
-
-task CopyFilesToDestination {
-	input {
-		File file_manifest_tsv
-		String docker_name
-	}
-
-	command <<<
-		python /app/copy_source_files_to_destination.py \
-			--source_destination_tsv ~{file_manifest_tsv}
 	>>>
 
 	runtime {

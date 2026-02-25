@@ -8,7 +8,6 @@ transforms and uploads CSV data, and generates sequencing file manifests.
 import logging
 import tempfile
 import shutil
-from typing import Dict, List
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
@@ -16,6 +15,7 @@ from datetime import datetime
 from ops_utils.request_util import RunRequest
 from ops_utils.token_util import Token
 from ops_utils.csv_util import Csv
+from ops_utils.gcp_util import GCPCloudFunctions
 
 from models import SFTPDatasetInfo, WorkspaceInfo
 from validation import DatasetValidator
@@ -31,6 +31,14 @@ MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}
 SUB_WORKSPACE_NAME = "{project_name}_{year}_{month}"
 BILLING_PROJECT = "SFC-Research"
 
+# Genomics Files Configuration
+# Files are in workspace: SFC-Research/ShareForCures Genomics Files
+GENOMICS_BUCKET = "gs://fc-secure-ba527f7b-105c-437e-84e3-fe7e944efdec/"
+
+# Mapping File Configuration
+# Mapping file is in workspace: SFC-Research/ShareForCures Operational Data Files
+MAPPING_FILE_PATH = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/onyx_mapping/onyx_mapping.csv"
+
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -40,12 +48,33 @@ def get_args() -> Namespace:
     return parser.parse_args()
 
 
+def load_participant_to_sample_mapping() -> dict:
+    """
+    Load the mapping from participant IDs to sample IDs.
+
+    Returns:
+        Dictionary mapping participant_id -> sample_id (with K prefix)
+    """
+    mapping_file_contents = GCPCloudFunctions().read_file(cloud_path=MAPPING_FILE_PATH)
+    # The mapping file is expected to have lines in the format: sample_id,participant_id
+    mapping_dict = {
+        # Add 'K' prefix to sample_id to match the format in the sequencing files naming
+        line.split(',')[1]: f'K{line.split(",")[0]}'
+        for line in mapping_file_contents.splitlines()
+        if 'Participant ID' not in line and line.strip()  # Skip header and empty lines
+    }
+    logging.info(f"Loaded participant to sample mapping for {len(mapping_dict)} participants")
+    return mapping_dict
+
+
+
 def process_main_workspace(
     sftp_info: SFTPDatasetInfo,
-    workspace_info: Dict[str, WorkspaceInfo],
+    workspace_info: dict,
     csv_transformer: CSVTransformer,
     terra_uploader: TerraUploader,
-    temp_dir: str
+    temp_dir: str,
+    participant_to_sample: dict
 ) -> None:
     """
     Process and upload data for the main workspace.
@@ -56,6 +85,7 @@ def process_main_workspace(
         csv_transformer: CSV transformer instance
         terra_uploader: Terra uploader instance
         temp_dir: Temporary directory for transformed files
+        participant_to_sample: Mapping of participant IDs to sample IDs
     """
     if not sftp_info.main_dataset_path or MAIN_WORKSPACE_NAME not in workspace_info:
         return
@@ -73,42 +103,22 @@ def process_main_workspace(
 
     # Create master sequencing files TSV
     all_participants = set()
-    participant_to_workspace: Dict[str, str] = {}
-    participant_to_bucket: Dict[str, str] = {}
 
     for ws_name, ws_info in workspace_info.items():
         if ws_name == MAIN_WORKSPACE_NAME:
             continue
         for participant in ws_info.participants:
             all_participants.add(participant)
-            participant_to_workspace[participant] = ws_name
-            participant_to_bucket[participant] = ws_info.bucket
 
     if all_participants:
         sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
 
-        # Create master list with proper bucket paths
-        sequencing_data = []
-        for idx, participant_id in enumerate(sorted(all_participants), start=1):
-            workspace_name = participant_to_workspace.get(participant_id, '')
-            sub_bucket = participant_to_bucket.get(participant_id, '')
-            cram_path = f"{sub_bucket}cram/{participant_id}.cram"
-            crai_path = f"{sub_bucket}cram/{participant_id}.cram.crai"
-            gvcf_path = f"{sub_bucket}gvcf/{participant_id}.g.vcf.gz"
-            sequencing_data.append({
-                'entity:sequencing_files_id': str(idx),
-                'participant_id': participant_id,
-                'workspace_name': workspace_name,
-                'cram': cram_path,
-                'crai': crai_path,
-                'gvcf': gvcf_path
-            })
-
-        # Create TSV using Csv utility
-        header_list = ['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf']
-        Csv(file_path=str(sequencing_tsv_path), delimiter='\t').create_tsv_from_list_of_dicts(
-            list_of_dicts=sequencing_data,
-            header_list=header_list
+        # Create master sequencing files TSV using genomics bucket
+        csv_transformer.create_sequencing_files_tsv(
+            participants=all_participants,
+            genomics_bucket=GENOMICS_BUCKET,
+            output_path=str(sequencing_tsv_path),
+            participant_to_sample=participant_to_sample
         )
 
         tsv_files.append(str(sequencing_tsv_path))
@@ -121,11 +131,12 @@ def process_main_workspace(
 
 def process_sub_workspaces(
     sftp_info: SFTPDatasetInfo,
-    workspace_info: Dict[str, WorkspaceInfo],
+    workspace_info: dict,
     csv_transformer: CSVTransformer,
     terra_uploader: TerraUploader,
-    temp_dir: str
-) -> List[Dict[str, str]]:
+    temp_dir: str,
+    participant_to_sample: dict
+) -> None:
     """
     Process and upload data for all sub workspaces.
 
@@ -135,12 +146,8 @@ def process_sub_workspaces(
         csv_transformer: CSV transformer instance
         terra_uploader: Terra uploader instance
         temp_dir: Temporary directory for transformed files
-
-    Returns:
-        List of file manifests with source and destination paths
+        participant_to_sample: Mapping of participant IDs to sample IDs
     """
-    file_manifest = []
-
     for sub_dir_info in sftp_info.sub_dataset_dirs:
         if not sub_dir_info.csv_directory_path:
             continue
@@ -178,27 +185,16 @@ def process_sub_workspaces(
             sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
             csv_transformer.create_sequencing_files_tsv(
                 participants=ws_info.participants,
-                workspace_bucket=ws_info.bucket,
+                genomics_bucket=GENOMICS_BUCKET,
                 output_path=str(sequencing_tsv_path),
-                is_main=False
+                participant_to_sample=participant_to_sample
             )
             tsv_files.append(str(sequencing_tsv_path))
-
-            # Add sequencing files to manifest
-            for participant_id in ws_info.participants:
-                # Assume source files exist in a standard location
-                # In real implementation, this would come from actual file discovery
-                for file_type, extension in [('cram', '.cram'), ('crai', '.cram.crai'), ('gvcf', '.g.vcf.gz')]:
-                    file_manifest.append({
-                        'source_file': f'/path/to/source/{file_type}/{participant_id}{extension}',
-                        'full_destination_path': f"{ws_info.bucket}{file_type}/{participant_id}{extension}"
-                    })
 
         # Upload all TSVs to sub workspace
         terra_uploader.upload_all_tsvs_to_workspace(ws_info.workspace, tsv_files)
         logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
 
-    return file_manifest
 
 
 def main():
@@ -232,6 +228,13 @@ def main():
     # Create workspaces
     token = Token()
     request_util = RunRequest(token=token)
+
+    # Load participant to sample ID mapping
+    participant_to_sample = load_participant_to_sample_mapping(request_util)
+    if not participant_to_sample:
+        logging.error("Failed to load participant to sample ID mapping. Exiting.")
+        exit(1)
+
     workspace_manager = WorkspaceManager(
         request_util=request_util,
         billing_project=BILLING_PROJECT,
@@ -245,7 +248,7 @@ def main():
     )
 
     # Create workspace info dict with participants and buckets
-    workspace_info: Dict[str, WorkspaceInfo] = {}
+    workspace_info: dict = {}
 
     # Get bucket for main workspace
     main_workspace = workspaces.get(MAIN_WORKSPACE_NAME)
@@ -309,26 +312,21 @@ def main():
     terra_uploader = TerraUploader(request_util=request_util)
 
     # Process main workspace
-    process_main_workspace(sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir)
+    process_main_workspace(
+        sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir, participant_to_sample
+    )
 
-    # Process sub workspaces and get file manifest
-    file_manifest = process_sub_workspaces(sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir)
+    # Process sub workspaces
+    process_sub_workspaces(
+        sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir, participant_to_sample
+    )
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
 
     logging.info(f"Successfully processed {len(workspaces)} workspace(s)")
 
-    # Write file manifest using Csv utility
-    Csv(file_path='file_manifest.tsv', delimiter='\t').create_tsv_from_list_of_dicts(
-        list_of_dicts=file_manifest,
-        header_list=['source_file', 'full_destination_path']
-    )
-    logging.info(f"Created file manifest with {len(file_manifest)} entries")
-
-    return file_manifest
-
 
 if __name__ == '__main__':
-    file_manifest = main()
+    main()
 
