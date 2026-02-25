@@ -2,7 +2,6 @@
 
 import logging
 import re
-from typing import Dict
 from datetime import datetime
 
 from ops_utils.request_util import RunRequest
@@ -135,7 +134,7 @@ class WorkspaceManager:
         self,
         sftp_info: SFTPDatasetInfo,
         continue_if_exists: bool = False
-    ) -> Dict[str, TerraWorkspace]:
+    ) -> dict:
         """
         Create Terra workspaces for main dataset and all sub datasets.
 

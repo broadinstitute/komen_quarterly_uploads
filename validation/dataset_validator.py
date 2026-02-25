@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Dict, List
+from typing import List
 from pathlib import Path
 
 from ops_utils.csv_util import Csv
@@ -14,7 +14,7 @@ class DatasetValidator:
     """Handles validation of CSV files in main and sub datasets."""
 
     @staticmethod
-    def parse_sub_directory_name(dir_name: str) -> Dict[str, int]:
+    def parse_sub_directory_name(dir_name: str) -> dict:
         """
         Parse researcher_id and project_id from sub directory name.
 
@@ -34,7 +34,7 @@ class DatasetValidator:
         }
 
     @staticmethod
-    def read_metadata_csv(csv_path: str) -> Dict[str, str]:
+    def read_metadata_csv(csv_path: str) -> dict:
         """
         Read metadata from a CSV file and return the first row as a dictionary.
 
@@ -96,7 +96,7 @@ class DatasetValidator:
             actual_files=sftp_info.main_dataset_files
         )
 
-    def validate_sub_datasets(self, sftp_info: SFTPDatasetInfo) -> Dict[str, bool]:
+    def validate_sub_datasets(self, sftp_info: SFTPDatasetInfo) -> dict:
         """
         Validate that all sub datasets have expected CSV files and read metadata.
 

@@ -147,6 +147,7 @@ class CSVTransformer:
         csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
 
         # Get headers from first row or empty list
+        header_list = []
         if csv_data:
             header_list = list(csv_data[0].keys())
         else:
@@ -193,20 +194,18 @@ class CSVTransformer:
     def create_sequencing_files_tsv(
         self,
         participants: Set[str],
-        workspace_bucket: str,
+        genomics_bucket: str,
         output_path: str,
-        is_main: bool = False,
-        source_workspaces: Optional[Dict[str, str]] = None
+        participant_to_sample: dict
     ) -> str:
         """
         Create a TSV file listing sequencing files for participants.
 
         Args:
             participants: Set of participant IDs
-            workspace_bucket: Workspace bucket path (e.g., 'gs://fc-bucket-path/')
+            genomics_bucket: Genomics files bucket path (e.g., 'gs://fc-secure-xxx/')
             output_path: Path to write output TSV
-            is_main: If True, create master list pointing to sub workspaces
-            source_workspaces: Dict mapping participant_id to workspace_name (for main only)
+            participant_to_sample: Dict mapping participant_id to sample_id (with K prefix)
 
         Returns:
             Path to created TSV file
@@ -215,40 +214,55 @@ class CSVTransformer:
 
         # Create rows for each participant
         for idx, participant_id in enumerate(sorted(participants), start=1):
-            if is_main:
-                # Main workspace: point to files in sub workspaces
-                workspace_name = source_workspaces.get(participant_id, '') if source_workspaces else ''
-                # Files live in sub workspace buckets
-                sub_workspace_bucket = workspace_bucket  # This will be set properly in caller
-                cram_path = f"{sub_workspace_bucket}cram/{participant_id}.cram"
-                crai_path = f"{sub_workspace_bucket}cram/{participant_id}.cram.crai"
-                gvcf_path = f"{sub_workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
-                sequencing_data.append({
-                    'entity:sequencing_files_id': str(idx),
-                    'participant_id': participant_id,
-                    'workspace_name': workspace_name,
-                    'cram': cram_path,
-                    'crai': crai_path,
-                    'gvcf': gvcf_path
-                })
-            else:
-                # Sub workspace: files in this workspace's bucket
-                cram_path = f"{workspace_bucket}cram/{participant_id}.cram"
-                crai_path = f"{workspace_bucket}cram/{participant_id}.cram.crai"
-                gvcf_path = f"{workspace_bucket}gvcf/{participant_id}.g.vcf.gz"
-                sequencing_data.append({
-                    'entity:sequencing_files_id': str(idx),
-                    'participant_id': participant_id,
-                    'cram': cram_path,
-                    'crai': crai_path,
-                    'gvcf': gvcf_path
-                })
+            # Get sample ID for this participant
+            sample_id = participant_to_sample.get(participant_id)
+            if not sample_id:
+                logging.warning(f"No sample ID found for participant {participant_id}, skipping")
+                continue
 
-        # Define headers based on is_main
-        if is_main:
-            header_list = ['entity:sequencing_files_id', 'participant_id', 'workspace_name', 'cram', 'crai', 'gvcf']
-        else:
-            header_list = ['entity:sequencing_files_id', 'participant_id', 'cram', 'crai', 'gvcf']
+            # Build file paths
+            cram_path = f"{genomics_bucket}CRAM/{sample_id}.cram"
+            crai_path = f"{genomics_bucket}CRAM/{sample_id}.cram.crai"
+            cram_md5_path = f"{genomics_bucket}CRAM/{sample_id}.cram.md5sum"
+
+            gvcf_path = f"{genomics_bucket}GVCF/{sample_id}.hard-filtered.gvcf.gz"
+            gvcf_tbi_path = f"{genomics_bucket}GVCF/{sample_id}.hard-filtered.gvcf.gz.tbi"
+
+            vcf_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz"
+            vcf_md5_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz.md5sum"
+            vcf_tbi_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz.tbi"
+
+            mapping_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.mapping_metrics.csv"
+            coverage_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.qc-coverage-region-1_coverage_metrics.csv"
+            vc_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.vc_metrics.csv"
+
+            row_data = {
+                'entity:sequencing_files_id': str(idx),
+                'participant_id': participant_id,
+                'sample_id': sample_id,
+                'cram': cram_path,
+                'crai': crai_path,
+                'cram_md5': cram_md5_path,
+                'gvcf': gvcf_path,
+                'gvcf_tbi': gvcf_tbi_path,
+                'vcf': vcf_path,
+                'vcf_md5': vcf_md5_path,
+                'vcf_tbi': vcf_tbi_path,
+                'mapping_metrics': mapping_metrics_path,
+                'coverage_metrics': coverage_metrics_path,
+                'vc_metrics': vc_metrics_path
+            }
+
+            sequencing_data.append(row_data)
+
+        # Define headers
+        header_list = [
+            'entity:sequencing_files_id', 'participant_id', 'sample_id',
+            'cram', 'crai', 'cram_md5',
+            'gvcf', 'gvcf_tbi',
+            'vcf', 'vcf_md5', 'vcf_tbi',
+            'mapping_metrics', 'coverage_metrics', 'vc_metrics'
+        ]
 
         # Create TSV using Csv utility
         Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
@@ -256,6 +270,6 @@ class CSVTransformer:
             header_list=header_list
         )
 
-        logging.info(f"Created sequencing files TSV with {len(participants)} participants: {output_path}")
+        logging.info(f"Created sequencing files TSV with {len(sequencing_data)} participants: {output_path}")
         return output_path
 

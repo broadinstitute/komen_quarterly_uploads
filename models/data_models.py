@@ -2,11 +2,7 @@
 
 from typing import List, Optional, Set
 from dataclasses import dataclass, field
-
-try:
-    from ops_utils.terra_util import TerraWorkspace
-except ImportError:
-    TerraWorkspace = None  # For type hints when ops_utils not available
+from ops_utils.terra_util import TerraWorkspace
 
 
 @dataclass
