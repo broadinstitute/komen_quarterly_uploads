@@ -8,14 +8,17 @@ transforms and uploads CSV data, and generates sequencing file manifests.
 import logging
 import tempfile
 import shutil
+import csv
+import re
+from io import StringIO
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 
 from ops_utils.request_util import RunRequest
 from ops_utils.token_util import Token
-from ops_utils.csv_util import Csv
-from ops_utils.gcp_util import GCPCloudFunctions
+from ops_utils.gcp_utils import GCPCloudFunctions
+from ops_utils.terra_util import TerraGroups, MEMBER, TerraWorkspace
 
 from models import SFTPDatasetInfo, WorkspaceInfo
 from validation import DatasetValidator
@@ -39,6 +42,12 @@ GENOMICS_BUCKET = "gs://fc-secure-ba527f7b-105c-437e-84e3-fe7e944efdec/"
 # Mapping file is in workspace: SFC-Research/ShareForCures Operational Data Files
 MAPPING_FILE_PATH = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/onyx_mapping/onyx_mapping.csv"
 
+# CSV containing all users cleared for genomics file access
+# Located in workspace: SFC-Research/ShareForCures Operational Data Files
+GENOMICS_FILE_ACCESS_CSV = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/researchers_genomic_access.csv"
+
+# Researcher email to ID mapping
+RESEARCHER_ID_TO_EMAIL_MAPPING = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/all_researchers.csv"
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -128,6 +137,11 @@ def process_main_workspace(
     terra_uploader.upload_all_tsvs_to_workspace(main_info.workspace, tsv_files)
     logging.info(f"Completed upload to main workspace: {len(tsv_files)} files")
 
+def get_cloud_csv_contents_as_dict(cloud_path: str) -> list[dict]:
+    file_contents = GCPCloudFunctions().read_file(cloud_path=cloud_path)
+    csv_text = file_contents.lstrip("\ufeff")
+    reader = csv.DictReader(StringIO(csv_text))
+    return list(reader)
 
 def process_sub_workspaces(
     sftp_info: SFTPDatasetInfo,
@@ -135,7 +149,9 @@ def process_sub_workspaces(
     csv_transformer: CSVTransformer,
     terra_uploader: TerraUploader,
     temp_dir: str,
-    participant_to_sample: dict
+    participant_to_sample: dict,
+    genomic_access_metadata: list[dict],
+    researcher_id_mapping: list[dict],
 ) -> None:
     """
     Process and upload data for all sub workspaces.
@@ -173,6 +189,15 @@ def process_sub_workspaces(
         csv_dir = Path(sub_dir_info.csv_directory_path)
         tsv_files = []
 
+        all_csv_files = csv_dir.glob('*.csv')
+
+        researcher_id = None
+        pattern = r"^researcher_id_\d+_project_id_\d+_metadata\.csv$"
+        for csv_file in all_csv_files:
+            if re.match(pattern, csv_file.name):
+                project_metadata = get_cloud_csv_contents_as_dict(csv_file.name)
+                researcher_id = [row["researcher_id"] for row in project_metadata][0]
+
         # Transform and convert all CSVs to TSVs
         for csv_file in csv_dir.glob('*.csv'):
             logging.info(f"Transforming {csv_file.name}...")
@@ -181,20 +206,41 @@ def process_sub_workspaces(
                 tsv_files.append(tsv_path)
 
         # Create sequencing files TSV for this sub workspace
-        if ws_info.participants:
-            sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
-            csv_transformer.create_sequencing_files_tsv(
-                participants=ws_info.participants,
-                genomics_bucket=GENOMICS_BUCKET,
-                output_path=str(sequencing_tsv_path),
-                participant_to_sample=participant_to_sample
-            )
-            tsv_files.append(str(sequencing_tsv_path))
+        if researcher_id in [user["Researcher ID"] for user in genomic_access_metadata]:
+            if ws_info.participants:
+                sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
+                csv_transformer.create_sequencing_files_tsv(
+                    participants=ws_info.participants,
+                    genomics_bucket=GENOMICS_BUCKET,
+                    output_path=str(sequencing_tsv_path),
+                    participant_to_sample=participant_to_sample
+                )
+                tsv_files.append(str(sequencing_tsv_path))
 
         # Upload all TSVs to sub workspace
         terra_uploader.upload_all_tsvs_to_workspace(ws_info.workspace, tsv_files)
         logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
 
+        logging.info("Adding researcher to project-specific workspace as reader")
+        terra_workspace_obj = TerraWorkspace(
+            billing_project=BILLING_PROJECT,
+            workspace_name=workspace_name,
+            request_util=RunRequest(token=Token())
+        )
+        researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
+        if researcher_email:
+            terra_workspace_obj.update_user_acl(
+                email=researcher_email[0],
+                access_level="READER",
+                can_share=False,
+                can_compute=False,
+                invite_users_not_found=True
+            )
+        logging.info("Adding 'Research-Admin' group as owner to project-specific workspace")
+        terra_workspace_obj.update_user_acl(
+            email="Research-Admin@firecloud.org",
+            access_level="OWNER",
+        )
 
 
 def main():
@@ -308,6 +354,14 @@ def main():
     temp_dir = tempfile.mkdtemp(prefix="terra_upload_")
     logging.info(f"Using temp directory: {temp_dir}")
 
+    logging.info("Adding researchers with genomics files access to the 'Genomics-Files-Access' group")
+    file_access_contents = get_cloud_csv_contents_as_dict(cloud_path=GENOMICS_FILE_ACCESS_CSV)
+    emails_with_genomic_file_access = [row["Email"] for row in file_access_contents]
+    for email in emails_with_genomic_file_access:
+        TerraGroups(request_util=request_util).add_user_to_group(
+            group="Genomics-Files-Access", email=email, role=MEMBER, continue_if_exists=True
+        )
+
     # Initialize uploader
     terra_uploader = TerraUploader(request_util=request_util)
 
@@ -316,15 +370,17 @@ def main():
         sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir, participant_to_sample
     )
 
+    researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING)
     # Process sub workspaces
     process_sub_workspaces(
-        sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir, participant_to_sample
+        sftp_info, workspace_info, csv_transformer, terra_uploader, temp_dir, participant_to_sample, file_access_contents, researcher_id_mapping
     )
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
 
     logging.info(f"Successfully processed {len(workspaces)} workspace(s)")
+
 
 
 if __name__ == '__main__':
