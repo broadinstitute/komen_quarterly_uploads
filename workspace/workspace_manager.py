@@ -7,7 +7,7 @@ from datetime import datetime
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
-from models.data_models import SFTPDatasetInfo, SubDatasetInfo
+from models.data_models import DatasetInfo, SubDatasetInfo
 
 
 class WorkspaceManager:
@@ -132,7 +132,7 @@ class WorkspaceManager:
 
     def create_all_sub_workspaces(
         self,
-        sftp_info: SFTPDatasetInfo,
+        sftp_info: DatasetInfo,
         continue_if_exists: bool = False
     ) -> dict[str, TerraWorkspace]:
         """
@@ -150,14 +150,16 @@ class WorkspaceManager:
         # Create sub workspaces
         for sub_dir_info in sftp_info.sub_dataset_dirs:
             if sub_dir_info.researcher_id is None or sub_dir_info.project_id is None:
-                logging.warning(f"Skipping workspace creation for {sub_dir_info.dir_name}: Missing IDs")
+                display_name = f"researcher_id_{sub_dir_info.researcher_id}_project_id_{sub_dir_info.project_id}"
+                logging.warning(f"Skipping workspace creation for {display_name}: Missing IDs")
                 continue
             try:
                 sub_workspace = self.create_sub_workspace(sub_dir_info, continue_if_exists)
                 workspaces[sub_workspace.workspace_name] = sub_workspace
 
             except Exception as e:
-                logging.error(f"Failed to create workspace for {sub_dir_info.dir_name}: {e}")
+                display_name = f"researcher_id_{sub_dir_info.researcher_id}_project_id_{sub_dir_info.project_id}"
+                logging.error(f"Failed to create workspace for {display_name}: {e}")
                 continue
 
         logging.info(f"Successfully created {len(workspaces)} workspace(s)")

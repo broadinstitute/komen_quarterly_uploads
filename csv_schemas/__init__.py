@@ -65,10 +65,10 @@ main_only_csvs = [
 sub_only_csvs = []
 
 # Expected CSV files in main_dataset
-main_csvs = common_csvs + main_only_csvs
+MAIN_CSVS = common_csvs + main_only_csvs
 
 # Expected CSV files in sub_dataset
-sub_csvs = common_csvs + sub_only_csvs
+SUB_CSVS = common_csvs + sub_only_csvs
 
 
 def get_sub_list_with_research_metadata_file(researcher_id: int, project_id: int) -> list[str]:
@@ -83,4 +83,4 @@ def get_sub_list_with_research_metadata_file(researcher_id: int, project_id: int
         List of CSV filenames including the metadata file
     """
     metadata_filename = f"researcher_id_{researcher_id}_project_id_{project_id}_metadata.csv"
-    return sub_csvs + [metadata_filename]
+    return SUB_CSVS + [metadata_filename]

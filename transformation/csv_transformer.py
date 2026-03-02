@@ -2,10 +2,12 @@
 
 import logging
 import csv
-from typing import Optional, Set
+from io import StringIO
+from typing import Optional, Set, List
 from pathlib import Path
 
 from ops_utils.csv_util import Csv
+from ops_utils.gcp_utils import GCPCloudFunctions
 
 
 class CSVTransformer:
@@ -24,9 +26,9 @@ class CSVTransformer:
         """
         # Remove .csv extension
         table_name = csv_filename.replace('.csv', '')
-        return f"entity:{table_name}_id"
+        return f"entity:{table_name}_table_id"
 
-    def add_entity_id_column(self, csv_path: str, output_path: str) -> bool:
+    def add_entity_id_column(self, csv_path: str, output_path: str) -> None:
         """
         Add entity ID column to CSV file.
 
@@ -43,20 +45,20 @@ class CSVTransformer:
         csv_filename = Path(csv_path).name
         entity_col_name = self.get_entity_column_name(csv_filename)
 
-        with open(csv_path, 'r', encoding='utf-8') as infile:
-            reader = csv.DictReader(infile)
-            fieldnames = [entity_col_name] + list(reader.fieldnames or [])
+        # TODO check if initializing this in main and passing into CSVTransformer would prevent multiple tokens from being generated
+        file_contents = GCPCloudFunctions().read_file(cloud_path=csv_path)
+        reader = csv.DictReader(StringIO(file_contents))
+        fieldnames = [entity_col_name] + list(reader.fieldnames or [])
 
-            with open(output_path, 'w', encoding='utf-8', newline='') as outfile:
-                writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-                writer.writeheader()
+        with open(output_path, 'w', encoding='utf-8', newline='') as outfile:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            writer.writeheader()
 
-                for row_num, row in enumerate(reader, start=1):
-                    row[entity_col_name] = str(row_num)
-                    writer.writerow(row)
+            for row_num, row in enumerate(reader, start=1):
+                row[entity_col_name] = str(row_num)
+                writer.writerow(row)
 
         logging.info(f"Added entity ID column '{entity_col_name}' to {csv_filename}")
-        return True
 
     def transform_csv_for_upload(self, csv_path: str, output_dir: str) -> Optional[str]:
         """
@@ -107,32 +109,28 @@ class CSVTransformer:
         logging.info(f"Extracted {len(participant_ids)} participant IDs from {Path(csv_path).name}")
         return participant_ids
 
-    def extract_all_participant_ids_from_directory(self, csv_directory: str) -> Set[str]:
+    def extract_all_participant_ids_from_files(self, csv_file_paths: List[str]) -> Set[str]:
         """
-        Extract all participant IDs from all CSVs in a directory.
+        Extract all participant IDs from a list of CSV file paths.
 
         Args:
-            csv_directory: Directory containing CSV files
+            csv_file_paths: List of full file paths to CSV files
 
         Returns:
             Set of all unique participant IDs found
         """
         all_participant_ids = set()
-        csv_dir_path = Path(csv_directory)
 
-        if not csv_dir_path.exists():
-            logging.error(f"Directory does not exist: {csv_directory}")
-            return all_participant_ids
-
-        # Process all CSV files in directory
-        for csv_file in csv_dir_path.glob('*.csv'):
-            participant_ids = self.extract_participant_ids(str(csv_file))
+        # Process all CSV files
+        for csv_file_path in csv_file_paths:
+            participant_ids = self.extract_participant_ids(csv_file_path)
             all_participant_ids.update(participant_ids)
 
-        logging.info(f"Total unique participant IDs in {csv_directory}: {len(all_participant_ids)}")
+        logging.info(f"Extracted {len(all_participant_ids)} unique participant IDs from {len(csv_file_paths)} files")
         return all_participant_ids
 
-    def convert_csv_to_tsv(self, csv_path: str, output_path: str) -> bool:
+    @staticmethod
+    def convert_csv_to_tsv(csv_path: str, output_path: str) -> None:
         """
         Convert CSV file to TSV format.
 
@@ -160,7 +158,6 @@ class CSVTransformer:
         )
 
         logging.info(f"Converted {Path(csv_path).name} to TSV: {Path(output_path).name}")
-        return True
 
     def transform_and_convert_csv(self, csv_path: str, output_dir: str) -> Optional[str]:
         """
@@ -179,20 +176,17 @@ class CSVTransformer:
         output_tsv_path = Path(output_dir) / tsv_filename
 
         # Add entity ID column
-        if not self.add_entity_id_column(csv_path, str(temp_csv_path)):
-            return None
+        self.add_entity_id_column(csv_path, str(temp_csv_path))
 
         # Convert to TSV
-        if not self.convert_csv_to_tsv(str(temp_csv_path), str(output_tsv_path)):
-            return None
+        self.convert_csv_to_tsv(str(temp_csv_path), str(output_tsv_path))
 
         # Clean up temp file
         temp_csv_path.unlink()
-
         return str(output_tsv_path)
 
+    @staticmethod
     def create_sequencing_files_tsv(
-        self,
         participants: Set[str],
         genomics_bucket: str,
         output_path: str,

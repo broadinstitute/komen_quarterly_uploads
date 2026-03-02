@@ -3,26 +3,22 @@
 from typing import List, Optional
 from dataclasses import dataclass, field
 
-
+# TODO add file_contents to data model to run future content validation
 @dataclass
 class SubDatasetInfo:
     """Information about a sub dataset directory."""
-    dir_name: str
-    files: List[str]
+    files: List[str]  # Full file paths to CSV files in this sub dataset
     researcher_id: Optional[int] = None
-    project_id: Optional[int] = None
-    project_name: Optional[str] = None
+    project_id: int = None
+    project_name: str = None
     date_created: Optional[str] = None
-    csv_directory_path: Optional[str] = None  # Path to the directory containing CSVs
 
 
 @dataclass
-class SFTPDatasetInfo:
+class DatasetInfo:
     """
     Data class for SFTP dataset information.
     Contains information about main and sub datasets retrieved from SFTP.
     """
-    main_dataset_dir: Optional[str] = None
-    main_dataset_files: List[str] = field(default_factory=list)
-    main_dataset_path: Optional[str] = None  # Full path to main dataset directory
+    main_dataset_files: List[str] = field(default_factory=list)  # Full file paths to main dataset CSV files
     sub_dataset_dirs: List[SubDatasetInfo] = field(default_factory=list)

@@ -6,6 +6,7 @@ transforms and uploads CSV data, and generates sequencing file manifests.
 """
 
 import logging
+import re
 import tempfile
 import shutil
 from pathlib import Path
@@ -15,10 +16,9 @@ from datetime import datetime
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 from ops_utils.token_util import Token
-from ops_utils.csv_util import Csv
-from ops_utils.gcp_util import GCPCloudFunctions
+from ops_utils.gcp_utils import GCPCloudFunctions
 
-from models.data_models import SFTPDatasetInfo
+from models.data_models import DatasetInfo, SubDatasetInfo
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
 from transformation.csv_transformer import CSVTransformer
@@ -32,6 +32,7 @@ logging.basicConfig(
 MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}"
 SUB_WORKSPACE_NAME_TEMPLATE = "{project_name}_{year}_{month}"
 BILLING_PROJECT = "SFC-Research"
+METADATA_CSVS_BUCKET = "fc-fa9fd891-996a-4624-864e-c4f81d165a90"
 
 # Genomics Files Configuration
 # Files are in workspace: SFC-Research/ShareForCures Genomics Files
@@ -68,7 +69,7 @@ def load_participant_to_sample_mapping() -> dict:
     return mapping_dict
 
 def process_main_workspace(
-    sftp_info: SFTPDatasetInfo,
+    dataset_info: DatasetInfo,
     terra_workspace_obj: TerraWorkspace,
     csv_transformer: CSVTransformer,
     terra_uploader: TerraUploader,
@@ -79,51 +80,44 @@ def process_main_workspace(
     Process and upload data for the main workspace.
 
     Args:
-        sftp_info: SFTP dataset information
-        workspace_info: Dictionary of workspace information
+        dataset_info: Dataset information
+        terra_workspace_obj: TerraWorkspace object for the main workspace
         csv_transformer: CSV transformer instance
         terra_uploader: Terra uploader instance
         temp_dir: Temporary directory for transformed files
         participant_to_sample: Mapping of participant IDs to sample IDs
     """
-    main_csv_dir = Path(sftp_info.main_dataset_path)
     tsv_files = []
 
     # Transform and convert all CSVs to TSVs
-    for csv_file in main_csv_dir.glob('*.csv'):
-        logging.info(f"Transforming {csv_file.name}...")
-        tsv_path = csv_transformer.transform_and_convert_csv(str(csv_file), temp_dir)
+    for csv_file_path in dataset_info.main_dataset_files:
+        logging.info(f"Transforming {Path(csv_file_path).name}...")
+        tsv_path = csv_transformer.transform_and_convert_csv(csv_file_path, temp_dir)
         if tsv_path:
             tsv_files.append(tsv_path)
 
-    # Create master sequencing files TSV
-    all_participants = set()
+    # TODO this will have to be changed to pass in file contents rather than the file paths
+    all_participants = csv_transformer.extract_all_participant_ids_from_files(dataset_info.main_dataset_files)
 
-    # TODO what are the participants here??
-    # Before it was initialized in the WorkspaceInfo schema as just set()
-    for participant in ws_info.participants:
-        all_participants.add(participant)
+    sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
 
-    if all_participants:
-        sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
+    # Create master sequencing files TSV using genomics bucket
+    csv_transformer.create_sequencing_files_tsv(
+        participants=all_participants,
+        genomics_bucket=GENOMICS_BUCKET,
+        output_path=str(sequencing_tsv_path),
+        participant_to_sample=participant_to_sample
+    )
 
-        # Create master sequencing files TSV using genomics bucket
-        csv_transformer.create_sequencing_files_tsv(
-            participants=all_participants,
-            genomics_bucket=GENOMICS_BUCKET,
-            output_path=str(sequencing_tsv_path),
-            participant_to_sample=participant_to_sample
-        )
-
-        tsv_files.append(str(sequencing_tsv_path))
-        logging.info(f"Created master sequencing files TSV with {len(all_participants)} participants")
+    tsv_files.append(str(sequencing_tsv_path))
+    logging.info(f"Created master sequencing files TSV with {len(all_participants)} participants")
 
     # Upload all TSVs to main workspace
     terra_uploader.upload_all_tsvs_to_workspace(terra_workspace_obj, tsv_files)
     logging.info(f"Completed upload to main workspace: {len(tsv_files)} files")
 
 def process_sub_workspaces(
-    sftp_info: SFTPDatasetInfo,
+    sftp_info: DatasetInfo,
     sub_workspace_metadata: list[dict],
     csv_transformer: CSVTransformer,
     terra_uploader: TerraUploader,
@@ -142,43 +136,98 @@ def process_sub_workspaces(
         participant_to_sample: Mapping of participant IDs to sample IDs
     """
     for sub_dir_info in sftp_info.sub_dataset_dirs:
-        if not sub_dir_info.csv_directory_path:
+        if not sub_dir_info.files:
             continue
 
-        csv_dir = Path(sub_dir_info.csv_directory_path)
         tsv_files = []
 
         # Transform and convert all CSVs to TSVs
-        for csv_file in csv_dir.glob("*.csv"):
-            logging.info(f"Transforming {csv_file.name}...")
-            tsv_path = csv_transformer.transform_and_convert_csv(str(csv_file), temp_dir)
+        for csv_file_path in sub_dir_info.files:
+            logging.info(f"Transforming {Path(csv_file_path).name}...")
+            tsv_path = csv_transformer.transform_and_convert_csv(csv_file_path, temp_dir)
             if tsv_path:
                 tsv_files.append(tsv_path)
 
-            # Determine workspace name
-            if sub_dir_info.project_name and sub_dir_info.date_created:
-                workspace_name = WorkspaceManager.format_workspace_name(
-                    sub_dir_info.project_name, sub_dir_info.date_created
-                )
-            else:
-                workspace_name = SUB_WORKSPACE_NAME_TEMPLATE.format(
-                    project_id=sub_dir_info.project_id, researcher_id=sub_dir_info.researcher_id
-                    )
-
-            participants = [a for a in sub_workspace_metadata if a["workspace_name"] == workspace_name][0]["participants"]
-            sub_workspace_terra_obj = [a for a in sub_workspace_metadata if a["workspace_name"] == workspace_name][0]["sub_workspace_terra_obj"]
-            sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
-
-            csv_transformer.create_sequencing_files_tsv(
-                participants=participants,
-                genomics_bucket=GENOMICS_BUCKET,
-                output_path=str(sequencing_tsv_path),
-                participant_to_sample=participant_to_sample
+        # Determine workspace name
+        if sub_dir_info.project_name and sub_dir_info.date_created:
+            workspace_name = WorkspaceManager.format_workspace_name(
+                sub_dir_info.project_name, sub_dir_info.date_created
+            )
+        else:
+            workspace_name = SUB_WORKSPACE_NAME_TEMPLATE.format(
+                project_id=sub_dir_info.project_id, researcher_id=sub_dir_info.researcher_id
             )
 
-            # Upload all TSVs to sub workspace
-            terra_uploader.upload_all_tsvs_to_workspace(sub_workspace_terra_obj, tsv_files)
-            logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
+        participants = [a for a in sub_workspace_metadata if a["workspace_name"] == workspace_name][0]["participants"]
+        sub_workspace_terra_obj = [a for a in sub_workspace_metadata if a["workspace_name"] == workspace_name][0]["sub_workspace_terra_obj"]
+        sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
+
+        csv_transformer.create_sequencing_files_tsv(
+            participants=participants,
+            genomics_bucket=GENOMICS_BUCKET,
+            output_path=str(sequencing_tsv_path),
+            participant_to_sample=participant_to_sample
+        )
+
+        # Upload all TSVs to sub workspace
+        terra_uploader.upload_all_tsvs_to_workspace(sub_workspace_terra_obj, tsv_files)
+        logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
+
+
+def parse_csv_paths_to_dataset_info(all_csv_paths: list[str]) -> DatasetInfo:
+    """
+    Parse a list of CSV file paths into a DatasetInfo structure.
+
+    Separates files into main dataset (under shareforcures_dataset_*/) and
+    sub datasets (under researcher_id_*_project_id_*/).
+
+    Args:
+        all_csv_paths: List of full file paths to CSV files
+
+    Returns:
+        DatasetInfo object with files organized by dataset type
+
+    Example paths:
+        - Main: "example_main_dir/shareforcures_dataset_2026_02/file.csv"
+        - Sub: "example_main_dir/researcher_id_62_project_id_115/file.csv"
+    """
+    main_files = []
+    sub_datasets_dict = {}  # Key: (researcher_id, project_id), Value: list of file paths
+
+    # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
+    # Pattern to match main dataset directory
+    main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
+
+    # Pattern to match sub dataset directory and extract IDs
+    sub_pattern = re.compile(r'/researcher_id_(\d+)_project_id_(\d+)/')
+
+    for file_path in all_csv_paths:
+        # Check if it's a main dataset file
+        if main_pattern.search(file_path):
+            main_files.append(file_path)
+        else:
+            # Check if it's a sub dataset file
+            sub_match = sub_pattern.search(file_path)
+            if sub_match:
+                researcher_id = int(sub_match.group(1))
+                project_id = int(sub_match.group(2))
+                key = (researcher_id, project_id)
+
+                if key not in sub_datasets_dict:
+                    sub_datasets_dict[key] = []
+                sub_datasets_dict[key].append(file_path)
+    # TODO grab file contents from the CSVs here and pass it into the data model to be saved for future content validation
+    # Create SubDatasetInfo objects
+    sub_dataset_dirs = []
+    for (researcher_id, project_id), files in sub_datasets_dict.items():
+        sub_info = SubDatasetInfo(
+            files=files, researcher_id=researcher_id, project_id=project_id
+        )
+        sub_dataset_dirs.append(sub_info)
+
+    return DatasetInfo(
+        main_dataset_files=main_files, sub_dataset_dirs=sub_dataset_dirs
+    )
 
 
 def main():
@@ -186,19 +235,9 @@ def main():
     args = get_args()
     continue_if_workspace_exists = args.continue_if_workspace_exists
 
-    # GET SFTP INFO
-    # TODO: Replace with actual SFTP retrieval logic
-    sftp_info = SFTPDatasetInfo()
-    # sftp_info.main_dataset_dir = 'shareforcures_dataset_2026_02'
-    # sftp_info.main_dataset_files = [list of files from SFTP]
-    # sftp_info.main_dataset_path = '/path/to/main/dataset'
-    # sftp_info.sub_dataset_dirs = [
-    #     SubDatasetInfo(
-    #         dir_name='researcher_id_62_project_id_115',
-    #         files=[...],
-    #         csv_directory_path='/path/to/sub/dataset'
-    #     ),
-    # ]
+    blob_metadata = GCPCloudFunctions().list_bucket_contents(bucket_name=METADATA_CSVS_BUCKET, file_extensions_to_include=[".csv"], file_name_only=True)
+    all_csv_paths = [a["path"] for a in blob_metadata]
+    dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths)
 
     # Initialize components
     validator = DatasetValidator()
@@ -212,7 +251,7 @@ def main():
     logging.info(f"Using temp directory: {temp_dir}")
 
     # Validate all datasets
-    if not validator.validate_all(sftp_info):
+    if not validator.validate_all(dataset_info):
         logging.error("Dataset validation failed. Exiting.")
         exit(1)
 
@@ -234,7 +273,7 @@ def main():
     main_workspace_terra_obj = workspace_manager.create_main_workspace(continue_if_exists=continue_if_workspace_exists)
     # Process the main workspace
     process_main_workspace(
-        sftp_info=sftp_info,
+        dataset_info=dataset_info,
         terra_workspace_obj=main_workspace_terra_obj,
         csv_transformer=csv_transformer,
         terra_uploader=terra_uploader,
@@ -244,13 +283,14 @@ def main():
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = workspace_manager.create_all_sub_workspaces(
-        sftp_info=sftp_info, continue_if_exists=continue_if_workspace_exists
+        sftp_info=dataset_info, continue_if_exists=continue_if_workspace_exists
     )
     sub_workspace_metadata = []
     # Extract participants and get buckets for sub workspaces
-    for sub_dir_info in sftp_info.sub_dataset_dirs:
-        if not sub_dir_info.csv_directory_path:
-            logging.warning(f"No CSV directory path for {sub_dir_info.dir_name}, skipping")
+    for sub_dir_info in dataset_info.sub_dataset_dirs:
+        if not sub_dir_info.files:
+            display_name = f"researcher_id_{sub_dir_info.researcher_id}_project_id_{sub_dir_info.project_id}"
+            logging.warning(f"No CSV files for {display_name}, skipping")
             continue
 
         # Determine workspace name (same logic as WorkspaceManager)
@@ -271,9 +311,10 @@ def main():
             continue
 
         # Extract participant IDs
-        logging.info(f"Extracting participant IDs from {sub_dir_info.dir_name}...")
-        sub_participants = csv_transformer.extract_all_participant_ids_from_directory(
-            sub_dir_info.csv_directory_path
+        display_name = f"researcher_id_{sub_dir_info.researcher_id}_project_id_{sub_dir_info.project_id}"
+        logging.info(f"Extracting participant IDs from {display_name}...")
+        sub_participants = csv_transformer.extract_all_participant_ids_from_files(
+            sub_dir_info.files
         )
 
         sub_workspace_metadata.append(
@@ -284,11 +325,11 @@ def main():
             }
         )
 
-        logging.info(f"Workspace '{workspace_name}' has {len(sub_participants)} participants, bucket: {bucket_path}")
+        logging.info(f"Workspace '{workspace_name}' has {len(sub_participants)} participants")
 
     # Process sub workspaces
     process_sub_workspaces(
-        sftp_info=sftp_info,
+        sftp_info=dataset_info,
         sub_workspace_metadata=sub_workspace_metadata,
         csv_transformer=csv_transformer,
         terra_uploader=terra_uploader,
