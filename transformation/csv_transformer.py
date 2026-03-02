@@ -2,7 +2,7 @@
 
 import logging
 import csv
-from typing import Optional, Set, Dict
+from typing import Optional, Set
 from pathlib import Path
 
 from ops_utils.csv_util import Csv

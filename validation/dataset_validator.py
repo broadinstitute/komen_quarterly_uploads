@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ops_utils.csv_util import Csv
 from csv_schemas import main_csvs, get_sub_list_with_research_metadata_file
-from models import SFTPDatasetInfo
+from models.data_models import SFTPDatasetInfo
 
 
 class DatasetValidator:

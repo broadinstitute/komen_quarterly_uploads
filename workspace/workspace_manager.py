@@ -7,7 +7,7 @@ from datetime import datetime
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
-from models import SFTPDatasetInfo, SubDatasetInfo
+from models.data_models import SFTPDatasetInfo, SubDatasetInfo
 
 
 class WorkspaceManager:
@@ -87,18 +87,6 @@ class WorkspaceManager:
         workspace.create_workspace(continue_if_exists=continue_if_exists)
         return workspace
 
-    def create_main_workspace(self, continue_if_exists: bool = False) -> TerraWorkspace:
-        """
-        Create the main dataset workspace.
-
-        Args:
-            continue_if_exists: Whether to continue if workspace already exists
-
-        Returns:
-            TerraWorkspace object for main workspace
-        """
-        return self.create_workspace(self.main_workspace_name, continue_if_exists)
-
     def create_sub_workspace(
         self,
         sub_dir_info: SubDatasetInfo,
@@ -130,33 +118,40 @@ class WorkspaceManager:
 
         return self.create_workspace(workspace_name, continue_if_exists)
 
-    def create_all_workspaces(
+    def create_main_workspace(self, continue_if_exists: bool = False) -> TerraWorkspace:
+        """
+        Create the main Terra workspace.
+
+        Args:
+            continue_if_exists: Whether to continue if workspace already exists
+
+        Returns:
+            TerraWorkspace object for the main workspace
+        """
+        return self.create_workspace(self.main_workspace_name, continue_if_exists)
+
+    def create_all_sub_workspaces(
         self,
         sftp_info: SFTPDatasetInfo,
         continue_if_exists: bool = False
-    ) -> dict:
+    ) -> dict[str, TerraWorkspace]:
         """
-        Create Terra workspaces for main dataset and all sub datasets.
+        Create Terra workspaces for the main dataset and all sub datasets.
 
         Args:
             sftp_info: Object containing SFTP dataset information
             continue_if_exists: Whether to continue if workspace already exists
 
         Returns:
-            Dict mapping workspace names to TerraWorkspace objects
+            Dict mapping workspace names to sub TerraWorkspace objects
         """
         workspaces = {}
-
-        # Create main workspace
-        main_workspace = self.create_main_workspace(continue_if_exists)
-        workspaces[self.main_workspace_name] = main_workspace
 
         # Create sub workspaces
         for sub_dir_info in sftp_info.sub_dataset_dirs:
             if sub_dir_info.researcher_id is None or sub_dir_info.project_id is None:
                 logging.warning(f"Skipping workspace creation for {sub_dir_info.dir_name}: Missing IDs")
                 continue
-
             try:
                 sub_workspace = self.create_sub_workspace(sub_dir_info, continue_if_exists)
                 workspaces[sub_workspace.workspace_name] = sub_workspace
