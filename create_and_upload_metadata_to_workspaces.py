@@ -99,6 +99,7 @@ def process_main_workspace(
     # TODO this will have to be changed to pass in file contents rather than the file paths
     all_participants = csv_transformer.extract_all_participant_ids_from_files(dataset_info.main_dataset_files)
 
+    # TODO WE LEFT OFF HERE
     sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
 
     # Create master sequencing files TSV using genomics bucket
