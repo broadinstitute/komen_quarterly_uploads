@@ -199,7 +199,7 @@ def process_sub_workspaces(
                 researcher_id = [row["researcher_id"] for row in project_metadata][0]
 
         # Transform and convert all CSVs to TSVs
-        for csv_file in csv_dir.glob('*.csv'):
+        for csv_file in all_csv_files:
             logging.info(f"Transforming {csv_file.name}...")
             tsv_path = csv_transformer.transform_and_convert_csv(str(csv_file), temp_dir)
             if tsv_path:
