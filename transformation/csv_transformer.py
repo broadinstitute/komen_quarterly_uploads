@@ -79,7 +79,7 @@ class CSVTransformer:
         return None
 
     @staticmethod
-    def extract_participant_ids(csv_path: str, patient_id_column: str = 'patient_id') -> Set[str]:
+    def extract_participant_ids(csv_path: str, patient_id_column: str = "patient_id") -> Set[str]:
         """
         Extract participant IDs from a CSV file.
 
@@ -93,7 +93,9 @@ class CSVTransformer:
         participant_ids = set()
 
         # Read CSV as list of dicts using Csv utility with comma delimiter
-        csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
+        cloud_file_contents = GCPCloudFunctions().read_file(cloud_path=csv_path)
+        reader = csv.DictReader(StringIO(cloud_file_contents))
+        csv_data = list(reader)
 
         # Check if patient_id column exists
         if csv_data and patient_id_column not in csv_data[0]:
@@ -102,7 +104,7 @@ class CSVTransformer:
 
         # Extract participant IDs
         for row in csv_data:
-            patient_id = row.get(patient_id_column, '').strip()
+            patient_id = row.get(patient_id_column, "").strip()
             if patient_id:
                 participant_ids.add(patient_id)
 

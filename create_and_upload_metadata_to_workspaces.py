@@ -96,10 +96,11 @@ def process_main_workspace(
         if tsv_path:
             tsv_files.append(tsv_path)
 
+    # TODO WE LEFT OFF HERE
     # TODO this will have to be changed to pass in file contents rather than the file paths
     all_participants = csv_transformer.extract_all_participant_ids_from_files(dataset_info.main_dataset_files)
+    print('ALL PARTICIPANTS:', all_participants)
 
-    # TODO WE LEFT OFF HERE
     sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
 
     # Create master sequencing files TSV using genomics bucket
@@ -262,7 +263,7 @@ def main():
         logging.error("Failed to load participant to sample ID mapping. Exiting.")
         exit(1)
 
-    # Initialize workspace manager object
+    # Initialize the workspace manager object
     workspace_manager = WorkspaceManager(
         request_util=request_util,
         billing_project=BILLING_PROJECT,
@@ -281,7 +282,7 @@ def main():
         temp_dir=temp_dir,
         participant_to_sample=participant_to_sample
     )
-
+    exit()
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = workspace_manager.create_all_sub_workspaces(
         sftp_info=dataset_info, continue_if_exists=continue_if_workspace_exists

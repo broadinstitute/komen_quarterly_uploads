@@ -1,11 +1,13 @@
 """Dataset validation logic."""
-
+import csv
 import logging
 import re
+from io import StringIO
 from typing import List
 from pathlib import Path
 
-from ops_utils.csv_util import Csv
+from ops_utils.gcp_utils import GCPCloudFunctions
+
 from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file
 from models.data_models import DatasetInfo
 
@@ -18,7 +20,7 @@ class DatasetValidator:
     @staticmethod
     def parse_sub_directory_name(dir_name: str) -> dict:
         """
-        Parse researcher_id and project_id from sub directory name.
+        Parse researcher_id and project_id from subdirectory name.
 
         Args:
             dir_name: Directory name like 'researcher_id_62_project_id_115'
@@ -31,8 +33,8 @@ class DatasetValidator:
             raise ValueError(f"Invalid sub directory name format: {dir_name}")
 
         return {
-            'researcher_id': int(match.group(1)),
-            'project_id': int(match.group(2))
+            "researcher_id": int(match.group(1)),
+            "project_id": int(match.group(2))
         }
 
     @staticmethod
@@ -46,11 +48,10 @@ class DatasetValidator:
         Returns:
             Dictionary with column names as keys and values from first data row
         """
-        # Read CSV as list of dicts using Csv utility with comma delimiter
-        metadata_list = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
+        file_contents = GCPCloudFunctions().read_file(cloud_path=csv_path)
+        reader = csv.DictReader(StringIO(file_contents))
 
-        # Return first row if exists, otherwise empty dict
-        return metadata_list[0] if metadata_list else {}
+        return list(reader)[0]
 
     @staticmethod
     def validate_csv_files(directory_name: str, expected_files: List[str], actual_files: List[str]) -> bool:
@@ -81,17 +82,17 @@ class DatasetValidator:
         logging.info(f"Validation passed for {directory_name}: all {len(expected_files)} expected files found")
         return True
 
-    def validate_main_dataset(self, sftp_info: DatasetInfo) -> bool:
+    def validate_main_dataset(self, dataset_info: DatasetInfo) -> bool:
         """
-        Validate that main dataset has all expected CSV files.
+        Validate that the main dataset has all expected CSV files.
 
         Args:
-            sftp_info: Object containing SFTP dataset information
+            dataset_info: Object containing SFTP dataset information
 
         Returns:
             True if validation passes, False otherwise
         """
-        full_file_paths = sftp_info.main_dataset_files
+        full_file_paths = dataset_info.main_dataset_files
         file_names = [Path(file_path).name for file_path in full_file_paths]
 
         logging.info(f"Validating main dataset files")
@@ -101,19 +102,19 @@ class DatasetValidator:
             actual_files=file_names
         )
 
-    def validate_sub_datasets(self, sftp_info: DatasetInfo) -> dict:
+    def validate_sub_datasets(self, dataset_info: DatasetInfo) -> dict:
         """
         Validate that all sub datasets have expected CSV files and read metadata.
 
         Args:
-            sftp_info: Object containing SFTP dataset information
+            dataset_info: Object containing SFTP dataset information
 
         Returns:
-            Dict mapping sub directory names to validation results
+            Dict mapping subdirectory names to validation results
         """
         validation_results = {}
 
-        for sub_dir_info in sftp_info.sub_dataset_dirs:
+        for sub_dir_info in dataset_info.sub_dataset_dirs:
             full_file_paths = sub_dir_info.files
             file_names = [Path(file_path).name for file_path in full_file_paths]
 
@@ -144,7 +145,7 @@ class DatasetValidator:
                 metadata_filename = f"researcher_id_{researcher_id}_project_id_{project_id}_metadata.csv"
                 # Find the metadata file in the files list
                 metadata_path = None
-                for file_path in files:
+                for file_path in full_file_paths:
                     if file_path.endswith(metadata_filename):
                         metadata_path = file_path
                         break
