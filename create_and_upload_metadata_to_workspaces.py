@@ -205,7 +205,7 @@ def process_sub_workspaces(
             if tsv_path:
                 tsv_files.append(tsv_path)
 
-        # Create sequencing files TSV for this sub workspace
+        # Create sequencing files TSV for this sub workspace IF the researcher is approved for genomics file access
         if researcher_id in [user["Researcher ID"] for user in genomic_access_metadata]:
             if ws_info.participants:
                 sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
@@ -380,7 +380,6 @@ def main():
     shutil.rmtree(temp_dir)
 
     logging.info(f"Successfully processed {len(workspaces)} workspace(s)")
-
 
 
 if __name__ == '__main__':
