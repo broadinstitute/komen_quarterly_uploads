@@ -105,13 +105,11 @@ def process_main_workspace(
     # Transform and convert all CSVs to TSVs
     for csv_file_path in dataset_info.main_dataset_files:
         logging.info(f"Transforming {Path(csv_file_path).name}...")
-        tsv_path = csv_transformer.transform_and_convert_csv(csv_file_path, temp_dir)
-        if tsv_path:
-            tsv_files.append(tsv_path)
+        file_contents = dataset_info.main_file_contents_map[csv_file_path]
+        tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
     # Extract all participant IDs from main dataset files using cached file contents
     all_participants = csv_transformer.extract_all_participant_ids_from_files(
-        csv_file_paths=dataset_info.main_dataset_files,
         file_contents_map=dataset_info.main_file_contents_map
     )
 
@@ -172,8 +170,8 @@ def process_sub_workspaces(
                     logging.warning(f"Researcher ID mismatch in {csv_file_path}: expected {sub_dataset.researcher_id}, found {researcher_id}")
 
             logging.info(f"Transforming {Path(csv_file_path).name}...")
-            tsv_path = csv_transformer.transform_and_convert_csv(csv_file_path, temp_dir)
-            tsv_files.append(tsv_path)
+            file_contents = sub_dataset.file_contents_map[csv_file_path]
+            tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
         workspace_name = determine_sub_workspace_name(
             workspace_manager_obj=workspace_manager_obj,
@@ -204,6 +202,7 @@ def process_sub_workspaces(
         logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
 
         researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
+        # TODO: Should we raise any type of error here if we don't find a matching email?
         if researcher_email:
             sub_workspace_terra_obj.update_user_acl(
                 email=researcher_email[0],
@@ -386,7 +385,6 @@ def main():
         # Extract participant IDs
         logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
         sub_participants = csv_transformer.extract_all_participant_ids_from_files(
-            csv_file_paths=sub_dataset.files,
             file_contents_map=sub_dataset.file_contents_map
         )
 

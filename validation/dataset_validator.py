@@ -11,7 +11,7 @@ from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file
 from models.data_models import DatasetInfo
 
 # TODO: Use the schemas outlined in csv_schemas to validate the actual contents of the CSVs (in addition to checking that all expected files are present)
-# Take into account that we'll need to use GCP tools to get file contents to check content validity
+# The file contents are loaded into the data model, so they don't need to be read from the cloud repeatedly
 
 class DatasetValidator:
     """Handles validation of CSV files in main and sub datasets."""
