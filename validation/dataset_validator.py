@@ -3,7 +3,6 @@ import csv
 import logging
 import re
 from io import StringIO
-from typing import List
 from pathlib import Path
 
 from ops_utils.gcp_utils import GCPCloudFunctions
@@ -54,7 +53,7 @@ class DatasetValidator:
         return list(reader)[0]
 
     @staticmethod
-    def validate_csv_files(directory_name: str, expected_files: List[str], actual_files: List[str]) -> bool:
+    def validate_csv_files(directory_name: str, expected_files: list[str], actual_files: list[str]) -> bool:
         """
         Validate that all expected CSV files are present in the directory.
 

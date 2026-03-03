@@ -763,4 +763,3 @@ class Visit(BaseModel):
     speciality_dept: Optional[str] = None
     presented_date: Optional[str] = None
     leave_date: Optional[str] = None
-

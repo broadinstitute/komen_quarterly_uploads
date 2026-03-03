@@ -3,7 +3,7 @@
 import logging
 import csv
 from io import StringIO
-from typing import Optional, Set, List, Dict, Any
+from typing import Optional, Any
 from pathlib import Path
 
 from ops_utils.csv_util import Csv
@@ -79,7 +79,7 @@ class CSVTransformer:
         return None
 
     @staticmethod
-    def extract_participant_ids(csv_path: str, patient_id_column: str = "patient_id") -> Set[str]:
+    def extract_participant_ids(csv_path: str, patient_id_column: str = "patient_id") -> set[str]:
         """
         Extract participant IDs from a CSV file.
 
@@ -113,10 +113,10 @@ class CSVTransformer:
 
     def extract_all_participant_ids_from_files(
         self,
-        csv_file_paths: List[str],
-        file_contents_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        csv_file_paths: list[str],
+        file_contents_map: Optional[dict[str, list[dict[str, Any]]]] = None,
         patient_id_column: str = "patient_id"
-    ) -> Set[str]:
+    ) -> set[str]:
         """
         Extract all participant IDs from a list of CSV file paths.
 
@@ -170,7 +170,7 @@ class CSVTransformer:
         # Read CSV as list of dicts with comma delimiter
         csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
 
-        # Get headers from first row or empty list
+        # Get headers from the first row or empty list
         header_list = []
         if csv_data:
             header_list = list(csv_data[0].keys())
@@ -213,7 +213,7 @@ class CSVTransformer:
 
     @staticmethod
     def create_sequencing_files_tsv(
-        participants: Set[str],
+        participants: set[str],
         genomics_bucket: str,
         output_path: str,
         participant_to_sample: dict
@@ -234,7 +234,7 @@ class CSVTransformer:
 
         # Create rows for each participant
         for idx, participant_id in enumerate(sorted(participants), start=1):
-            # Get sample ID for this participant
+            # Get the sample ID for this participant
             sample_id = participant_to_sample.get(participant_id)
             if not sample_id:
                 logging.warning(f"No sample ID found for participant {participant_id}, skipping")
@@ -257,31 +257,40 @@ class CSVTransformer:
             vc_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.vc_metrics.csv"
 
             row_data = {
-                'entity:sequencing_files_id': str(idx),
-                'participant_id': participant_id,
-                'sample_id': sample_id,
-                'cram': cram_path,
-                'crai': crai_path,
-                'cram_md5': cram_md5_path,
-                'gvcf': gvcf_path,
-                'gvcf_tbi': gvcf_tbi_path,
-                'vcf': vcf_path,
-                'vcf_md5': vcf_md5_path,
-                'vcf_tbi': vcf_tbi_path,
-                'mapping_metrics': mapping_metrics_path,
-                'coverage_metrics': coverage_metrics_path,
-                'vc_metrics': vc_metrics_path
+                "entity:sequencing_files_id": str(idx),
+                "participant_id": participant_id,
+                "sample_id": sample_id,
+                "cram": cram_path,
+                "crai": crai_path,
+                "cram_md5": cram_md5_path,
+                "gvcf": gvcf_path,
+                "gvcf_tbi": gvcf_tbi_path,
+                "vcf": vcf_path,
+                "vcf_md5": vcf_md5_path,
+                "vcf_tbi": vcf_tbi_path,
+                "mapping_metrics": mapping_metrics_path,
+                "coverage_metrics": coverage_metrics_path,
+                "vc_metrics": vc_metrics_path
             }
 
             sequencing_data.append(row_data)
 
         # Define headers
         header_list = [
-            'entity:sequencing_files_id', 'participant_id', 'sample_id',
-            'cram', 'crai', 'cram_md5',
-            'gvcf', 'gvcf_tbi',
-            'vcf', 'vcf_md5', 'vcf_tbi',
-            'mapping_metrics', 'coverage_metrics', 'vc_metrics'
+            "entity:sequencing_files_id",
+            "participant_id",
+            "sample_id",
+            "cram",
+            "crai",
+            "cram_md5",
+            "gvcf",
+            "gvcf_tbi",
+            "vcf",
+            "vcf_md5",
+            "vcf_tbi",
+            "mapping_metrics",
+            "coverage_metrics",
+            "vc_metrics",
         ]
 
         # Create TSV using Csv utility
