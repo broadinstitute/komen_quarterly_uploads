@@ -114,7 +114,7 @@ class DatasetValidator:
         """
         validation_results = {}
 
-        for sub_dir_info in dataset_info.sub_dataset_dirs:
+        for sub_dir_info in dataset_info.sub_datasets:
             full_file_paths = sub_dir_info.files
             file_names = [Path(file_path).name for file_path in full_file_paths]
 

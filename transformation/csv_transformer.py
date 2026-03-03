@@ -3,7 +3,7 @@
 import logging
 import csv
 from io import StringIO
-from typing import Optional, Set, List
+from typing import Optional, Set, List, Dict, Any
 from pathlib import Path
 
 from ops_utils.csv_util import Csv
@@ -69,7 +69,7 @@ class CSVTransformer:
             output_dir: Directory to write transformed CSV
 
         Returns:
-            Path to transformed CSV file, or None if failed
+            Path to the transformed CSV file, or None if failed
         """
         csv_filename = Path(csv_path).name
         output_path = Path(output_dir) / csv_filename
@@ -111,12 +111,20 @@ class CSVTransformer:
         logging.info(f"Extracted {len(participant_ids)} participant IDs from {Path(csv_path).name}")
         return participant_ids
 
-    def extract_all_participant_ids_from_files(self, csv_file_paths: List[str]) -> Set[str]:
+    def extract_all_participant_ids_from_files(
+        self,
+        csv_file_paths: List[str],
+        file_contents_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        patient_id_column: str = "patient_id"
+    ) -> Set[str]:
         """
         Extract all participant IDs from a list of CSV file paths.
 
         Args:
             csv_file_paths: List of full file paths to CSV files
+            file_contents_map: Optional dict mapping file paths to their contents (list of row dictionaries).
+                              If provided, this is used instead of reading files again.
+            patient_id_column: Name of the column containing patient IDs (default: 'patient_id')
 
         Returns:
             Set of all unique participant IDs found
@@ -125,8 +133,24 @@ class CSVTransformer:
 
         # Process all CSV files
         for csv_file_path in csv_file_paths:
-            participant_ids = self.extract_participant_ids(csv_file_path)
-            all_participant_ids.update(participant_ids)
+            # If files contents mapping is provided, use it directly
+            if file_contents_map and csv_file_path in file_contents_map:
+                csv_data = file_contents_map[csv_file_path]
+
+                # Check if patient_id column exists
+                if csv_data and patient_id_column not in csv_data[0]:
+                    logging.warning(f"Column '{patient_id_column}' not found in {csv_file_path}")
+                    continue
+
+                # Extract participant IDs
+                for row in csv_data:
+                    patient_id = row.get(patient_id_column, "").strip()
+                    if patient_id:
+                        all_participant_ids.add(patient_id)
+            else:
+                # Fall back to reading the file if the mapping isn't provided or doesn't contain this file
+                participant_ids = self.extract_participant_ids(csv_file_path)
+                all_participant_ids.update(participant_ids)
 
         logging.info(f"Extracted {len(all_participant_ids)} unique participant IDs from {len(csv_file_paths)} files")
         return all_participant_ids
