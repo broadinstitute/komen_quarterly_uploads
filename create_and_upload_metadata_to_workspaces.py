@@ -1,7 +1,7 @@
 """
 Main script for Komen Quarterly Uploads.
 
-This script validates CSV datasets from SFTP, creates Terra workspaces,
+This script validates CSV datasets from a Google bucket, creates Terra workspaces,
 transforms and uploads CSV data, and generates sequencing file manifests.
 """
 

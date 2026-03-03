@@ -20,8 +20,8 @@ class SubDatasetInfo:
 @dataclass
 class DatasetInfo:
     """
-    Data class for SFTP dataset information.
-    Contains information about main and sub datasets retrieved from SFTP.
+    Data class for dataset information.
+    Contains information about main and sub datasets retrieved from a Google bucket.
     """
     # Full file paths to main dataset CSV files
     main_dataset_files: list[str] = field(default_factory=list)
