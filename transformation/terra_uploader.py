@@ -1,7 +1,6 @@
 """Terra upload utilities."""
 
 import logging
-from typing import List
 from pathlib import Path
 
 from ops_utils.terra_util import TerraWorkspace
@@ -19,13 +18,14 @@ class TerraUploader:
         """
         self.request_util = request_util
 
-    def upload_tsv_to_workspace(self, workspace: TerraWorkspace, tsv_path: str) -> bool:
+    @staticmethod
+    def upload_tsv_to_workspace(workspace: TerraWorkspace, tsv_path: str) -> bool:
         """
         Upload a TSV file to a Terra workspace.
 
         Args:
             workspace: TerraWorkspace object
-            tsv_path: Path to TSV file
+            tsv_path: Path to the TSV file
 
         Returns:
             True if successful
@@ -37,7 +37,7 @@ class TerraUploader:
     def upload_all_tsvs_to_workspace(
         self,
         workspace: TerraWorkspace,
-        tsv_files: List[str]
+        tsv_files: list[str]
     ) -> bool:
         """
         Upload all TSV files to a workspace.
@@ -54,4 +54,3 @@ class TerraUploader:
 
         logging.info(f"Uploaded {len(tsv_files)} TSV files to {workspace.workspace_name}")
         return True
-

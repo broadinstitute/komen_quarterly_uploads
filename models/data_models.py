@@ -1,39 +1,30 @@
 """Data models for Komen Quarterly Uploads."""
 
-from typing import List, Optional, Set
+from typing import Optional, Any
 from dataclasses import dataclass, field
-from ops_utils.terra_util import TerraWorkspace
 
 
 @dataclass
 class SubDatasetInfo:
     """Information about a sub dataset directory."""
-    dir_name: str
-    files: List[str]
-    researcher_id: Optional[int] = None
-    project_id: Optional[int] = None
+    # Full file paths to CSV files in this sub dataset
+    files: list[str]
+    # Mapping of file_path -> file contents as a list of dictionaries
+    file_contents_map: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    researcher_id: int = None
+    project_id: int = None
     project_name: Optional[str] = None
     date_created: Optional[str] = None
-    csv_directory_path: Optional[str] = None  # Path to the directory containing CSVs
 
 
 @dataclass
-class WorkspaceInfo:
-    """Information about a created workspace."""
-    workspace: 'TerraWorkspace'
-    workspace_name: str
-    participants: Set[str] = field(default_factory=set)
-    bucket: Optional[str] = None  # Full bucket path including gs://
-
-
-@dataclass
-class SFTPDatasetInfo:
+class DatasetInfo:
     """
-    Data class for SFTP dataset information.
-    Contains information about main and sub datasets retrieved from SFTP.
+    Data class for dataset information.
+    Contains information about main and sub datasets retrieved from a Google bucket.
     """
-    main_dataset_dir: Optional[str] = None
-    main_dataset_files: List[str] = field(default_factory=list)
-    main_dataset_path: Optional[str] = None  # Full path to main dataset directory
-    sub_dataset_dirs: List[SubDatasetInfo] = field(default_factory=list)
-
+    # Full file paths to main dataset CSV files
+    main_dataset_files: list[str] = field(default_factory=list)
+    # Mapping of file_path -> file contents as a list of dictionaries
+    main_file_contents_map: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    sub_datasets: list[SubDatasetInfo] = field(default_factory=list)
