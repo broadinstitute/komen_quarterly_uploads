@@ -3,11 +3,34 @@ Pydantic models for sub_dataset CSV files.
 These models are designed to validate data converted from CSV to list of dictionaries.
 """
 
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, Any
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
-class ResearcherProjectMetadata(BaseModel):
+class CsvModel(BaseModel):
+    """
+    Base model for all CSV row models.
+
+    Validation rules:
+    - Every field defined on the model must exist as a column in the CSV row,
+      even if optional. A missing column fails validation; an empty value is fine.
+    - Extra columns in the CSV (not defined in the model) also fail validation.
+      Headers must match the model exactly.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_all_columns_present(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        missing = [field for field in cls.model_fields if field not in data]
+        if missing:
+            raise ValueError(f"Missing columns (present in model but not in CSV): {missing}")
+        return data
+
+
+class ResearcherProjectMetadata(CsvModel):
     """Model for researcher_id_62_project_id_115_metadata.csv"""
     researcher_id: Optional[str] = None
     project_id: Optional[str] = None
@@ -18,7 +41,7 @@ class ResearcherProjectMetadata(BaseModel):
     project_filter: Optional[str] = None
 
 
-class Demographics(BaseModel):
+class Demographics(CsvModel):
     """Model for demographics.csv"""
     patient_id: str
     birth_year: Optional[str] = None
@@ -43,7 +66,7 @@ class Demographics(BaseModel):
     alcohol_use: Optional[str] = None
 
 
-class Biomarker(BaseModel):
+class Biomarker(CsvModel):
     """Model for biomarker.csv"""
     patient_id: str
     biomarker_id: str
@@ -55,7 +78,7 @@ class Biomarker(BaseModel):
     biomarker_genomic: Optional[str] = None
 
 
-class BiomarkerTestDetail(BaseModel):
+class BiomarkerTestDetail(CsvModel):
     """Model for biomarker_test_detail.csv"""
     patient_id: str
     biomarker_id: str
@@ -68,17 +91,18 @@ class BiomarkerTestDetail(BaseModel):
     biomarker_result_percentage: Optional[str] = None
 
 
-class BiomarkersGenes(BaseModel):
+class BiomarkersGenes(CsvModel):
     """Model for biomarkers_genes.csv"""
     patient_id: str
     biomarker_id: str
     biomarker_gene_id: str
-    gene: Optional[str] = None
-    gene_alteration: Optional[str] = None
-    mutation: Optional[str] = None
+    biomarker_gene: Optional[str] = None
+    biomarker_gene_date: Optional[str] = None
+    biomarker_gene_finding: Optional[str] = None
+    biomarker_gene_variant_type: Optional[str] = None
 
 
-class DiseaseCharacteristic(BaseModel):
+class DiseaseCharacteristic(CsvModel):
     """Model for disease_characteristic.csv"""
     patient_id: str
     disease_id: str
@@ -95,7 +119,7 @@ class DiseaseCharacteristic(BaseModel):
     progression_yn: Optional[str] = None
 
 
-class DiseaseCharacteristicsPrimarySite(BaseModel):
+class DiseaseCharacteristicsPrimarySite(CsvModel):
     """Model for disease_characteristics_primary_site.csv"""
     patient_id: str
     disease_id: str
@@ -106,7 +130,7 @@ class DiseaseCharacteristicsPrimarySite(BaseModel):
     multifocal_initial: Optional[str] = None
 
 
-class DiseaseCharacteristicsProgression(BaseModel):
+class DiseaseCharacteristicsProgression(CsvModel):
     """Model for disease_characteristics_progression.csv"""
     patient_id: str
     progression_id: str
@@ -121,7 +145,7 @@ class DiseaseCharacteristicsProgression(BaseModel):
     group_stage_progression_date: Optional[str] = None
 
 
-class DiseaseCharacteristicsProgressionSite(BaseModel):
+class DiseaseCharacteristicsProgressionSite(CsvModel):
     """Model for disease_characteristics_progression_site.csv"""
     patient_id: str
     progression_id: str
@@ -133,7 +157,7 @@ class DiseaseCharacteristicsProgressionSite(BaseModel):
     multifocal_progression: Optional[str] = None
 
 
-class FamilyHistoryBiologicalFather(BaseModel):
+class FamilyHistoryBiologicalFather(CsvModel):
     """Model for family_history_biological_father.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -152,7 +176,7 @@ class FamilyHistoryBiologicalFather(BaseModel):
     father_age_second_cancer_diagnosis: Optional[str] = None
 
 
-class FamilyHistoryBiologicalMother(BaseModel):
+class FamilyHistoryBiologicalMother(CsvModel):
     """Model for family_history_biological_mother.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -171,7 +195,7 @@ class FamilyHistoryBiologicalMother(BaseModel):
     mother_age_second_cancer_diagnosis: Optional[str] = None
 
 
-class FamilyHistoryBiologicalSiblings(BaseModel):
+class FamilyHistoryBiologicalSiblings(CsvModel):
     """Model for family_history_biological_siblings.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -188,7 +212,7 @@ class FamilyHistoryBiologicalSiblings(BaseModel):
     sibling_age_second_cancer_diagnosis: Optional[str] = None
 
 
-class FamilyHistoryBiologicalSiblingsIntro(BaseModel):
+class FamilyHistoryBiologicalSiblingsIntro(CsvModel):
     """Model for family_history_biological_siblings_intro.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -199,7 +223,7 @@ class FamilyHistoryBiologicalSiblingsIntro(BaseModel):
     number_of_siblings_with_cancer: Optional[str] = None
 
 
-class FamilyHistoryCancer(BaseModel):
+class FamilyHistoryCancer(CsvModel):
     """Model for family_history_cancer.csv"""
     patient_id: str
     family_history_id: str
@@ -209,7 +233,7 @@ class FamilyHistoryCancer(BaseModel):
     relative_other: Optional[str] = None
 
 
-class FamilyHistoryOtherFamilyMembers(BaseModel):
+class FamilyHistoryOtherFamilyMembers(CsvModel):
     """Model for family_history_other_family_members.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -232,7 +256,7 @@ class FamilyHistoryOtherFamilyMembers(BaseModel):
     number_grandfathers_uncles_had_cancer: Optional[str] = None
 
 
-class FamilyHistoryOtherFamilyMembersRelatives(BaseModel):
+class FamilyHistoryOtherFamilyMembersRelatives(CsvModel):
     """Model for family_history_other_family_members_relatives.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -245,7 +269,7 @@ class FamilyHistoryOtherFamilyMembersRelatives(BaseModel):
     birth_sex: Optional[str] = None
 
 
-class FamilyHistoryYou(BaseModel):
+class FamilyHistoryYou(CsvModel):
     """Model for family_history_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -259,7 +283,7 @@ class FamilyHistoryYou(BaseModel):
     family_members_with_history_answers: Optional[str] = None
 
 
-class Imaging(BaseModel):
+class Imaging(CsvModel):
     """Model for imaging.csv"""
     patient_id: str
     imaging_id: str
@@ -277,7 +301,7 @@ class Imaging(BaseModel):
     imaging_photos_yn: Optional[str] = None
 
 
-class Lab(BaseModel):
+class Lab(CsvModel):
     """Model for lab.csv"""
     patient_id: str
     lab_id: str
@@ -290,7 +314,7 @@ class Lab(BaseModel):
     lab_specimen_type: Optional[str] = None
 
 
-class MedList(BaseModel):
+class MedList(CsvModel):
     """Model for med_list.csv"""
     patient_id: str
     med_id: str
@@ -301,14 +325,14 @@ class MedList(BaseModel):
     med_end_date: Optional[str] = None
 
 
-class PatientEnrollmentStatus(BaseModel):
+class PatientEnrollmentStatus(CsvModel):
     """Model for patient_enrollment_status.csv"""
     patient_id: str
     role_user_status: Optional[str] = None
     step: Optional[str] = None
 
 
-class PatientProfileCancerInfo(BaseModel):
+class PatientProfileCancerInfo(CsvModel):
     """Model for patient_profile_cancer_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -323,7 +347,7 @@ class PatientProfileCancerInfo(BaseModel):
     living_with_mbc_year: Optional[str] = None
 
 
-class PatientProfileContactInfo(BaseModel):
+class PatientProfileContactInfo(CsvModel):
     """Model for patient_profile_contact_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -333,7 +357,7 @@ class PatientProfileContactInfo(BaseModel):
     mailing_state: Optional[str] = None
 
 
-class PatientProfileEligibility(BaseModel):
+class PatientProfileEligibility(CsvModel):
     """Model for patient_profile_eligibility.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -343,7 +367,7 @@ class PatientProfileEligibility(BaseModel):
     year_of_first_breast_cancer_diagnosis: Optional[str] = None
 
 
-class PatientProfileMoreAboutYou(BaseModel):
+class PatientProfileMoreAboutYou(CsvModel):
     """Model for patient_profile_more_about_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -358,7 +382,7 @@ class PatientProfileMoreAboutYou(BaseModel):
     years_of_education_completed: Optional[str] = None
 
 
-class PatientProfileProviderInfo(BaseModel):
+class PatientProfileProviderInfo(CsvModel):
     """Model for patient_profile_provider_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -372,7 +396,7 @@ class PatientProfileProviderInfo(BaseModel):
     genetic_test: Optional[str] = None
 
 
-class PatientProfileSupplementalAboutYou(BaseModel):
+class PatientProfileSupplementalAboutYou(CsvModel):
     """Model for patient_profile_supplemental_about_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -383,7 +407,7 @@ class PatientProfileSupplementalAboutYou(BaseModel):
     sexual_orientation: Optional[str] = None
 
 
-class Payor(BaseModel):
+class Payor(CsvModel):
     """Model for payor.csv"""
     patient_id: str
     payor_id: str
@@ -396,7 +420,7 @@ class Payor(BaseModel):
     disenroll_date: Optional[str] = None
 
 
-class PerformanceScore(BaseModel):
+class PerformanceScore(CsvModel):
     """Model for performance_score.csv"""
     patient_id: str
     ps_id: str
@@ -407,7 +431,7 @@ class PerformanceScore(BaseModel):
     karnofsky_score: Optional[str] = None
 
 
-class Pro(BaseModel):
+class Pro(CsvModel):
     """Model for pro.csv"""
     patient_id: str
     pro_id: str
@@ -419,7 +443,7 @@ class Pro(BaseModel):
     pro_date: Optional[str] = None
 
 
-class ProblemList(BaseModel):
+class ProblemList(CsvModel):
     """Model for problem_list.csv"""
     patient_id: str
     problem_list_id: str
@@ -429,7 +453,7 @@ class ProblemList(BaseModel):
     diagnosis_documented_date: Optional[str] = None
 
 
-class Procedures(BaseModel):
+class Procedures(CsvModel):
     """Model for procedures.csv"""
     patient_id: str
     procedure_id: str
@@ -443,7 +467,7 @@ class Procedures(BaseModel):
     procedure_stop_date: Optional[str] = None
 
 
-class QualityOfLifeGeneral(BaseModel):
+class QualityOfLifeGeneral(CsvModel):
     """Model for quality_of_life_general.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -455,7 +479,7 @@ class QualityOfLifeGeneral(BaseModel):
     significant_events: Optional[str] = None
 
 
-class QualityOfLifeMentalHealth(BaseModel):
+class QualityOfLifeMentalHealth(CsvModel):
     """Model for quality_of_life_mental_health.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -487,7 +511,7 @@ class QualityOfLifeMentalHealth(BaseModel):
     sexually_attractive: Optional[str] = None
 
 
-class QualityOfLifePhysicalAbility(BaseModel):
+class QualityOfLifePhysicalAbility(CsvModel):
     """Model for quality_of_life_physical_ability.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -539,7 +563,7 @@ class QualityOfLifePhysicalAbility(BaseModel):
     interference_daily_activity_mood_swings: Optional[str] = None
 
 
-class QualityOfLifeSocialConnectedness(BaseModel):
+class QualityOfLifeSocialConnectedness(CsvModel):
     """Model for quality_of_life_social_connectedness.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -561,7 +585,7 @@ class QualityOfLifeSocialConnectedness(BaseModel):
     reluctant_to_start_relationships: Optional[str] = None
 
 
-class QualityOfLifeSpirituality(BaseModel):
+class QualityOfLifeSpirituality(CsvModel):
     """Model for quality_of_life_spirituality.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -574,7 +598,7 @@ class QualityOfLifeSpirituality(BaseModel):
     last_month_sense_of_purpose: Optional[str] = None
 
 
-class RadiationTherapy(BaseModel):
+class RadiationTherapy(CsvModel):
     """Model for radiation_therapy.csv"""
     patient_id: str
     radiation_therapy_id: str
@@ -593,7 +617,7 @@ class RadiationTherapy(BaseModel):
     radiation_end_date: Optional[str] = None
 
 
-class Regimen(BaseModel):
+class Regimen(CsvModel):
     """Model for regimen.csv"""
     patient_id: str
     regimen_id: str
@@ -609,7 +633,7 @@ class Regimen(BaseModel):
     regimen_dc_reason: Optional[str] = None
 
 
-class SocialDeterminantSocialAndCommunityContext(BaseModel):
+class SocialDeterminantSocialAndCommunityContext(CsvModel):
     """Model for social_determinant_social_and_community_context.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -629,7 +653,7 @@ class SocialDeterminantSocialAndCommunityContext(BaseModel):
     area_of_experienced_inferior_service: Optional[str] = None
 
 
-class SocialDeterminantsEconomicStability(BaseModel):
+class SocialDeterminantsEconomicStability(CsvModel):
     """Model for social_determinants_economic_stability.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -657,7 +681,7 @@ class SocialDeterminantsEconomicStability(BaseModel):
     reason_for_leaving_or_losing_job: Optional[str] = None
 
 
-class SocialDeterminantsEducationAccessAndQuality(BaseModel):
+class SocialDeterminantsEducationAccessAndQuality(CsvModel):
     """Model for social_determinants_education_access_and_quality.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -672,7 +696,7 @@ class SocialDeterminantsEducationAccessAndQuality(BaseModel):
     help_gained_regarding_diagnosis_or_treatment: Optional[str] = None
 
 
-class SocialDeterminantsHealthCareAccessAndQuality(BaseModel):
+class SocialDeterminantsHealthCareAccessAndQuality(CsvModel):
     """Model for social_determinants_health_care_access_and_quality.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -692,7 +716,7 @@ class SocialDeterminantsHealthCareAccessAndQuality(BaseModel):
     worked_to_keep_health_insurance: Optional[str] = None
 
 
-class SocialDeterminantsNeighborhoodAndBuiltEnvironment(BaseModel):
+class SocialDeterminantsNeighborhoodAndBuiltEnvironment(CsvModel):
     """Model for social_determinants_neighborhood_and_built_environment.csv"""
     patient_id: str
     task_id: Optional[str] = None
@@ -719,7 +743,7 @@ class SocialDeterminantsNeighborhoodAndBuiltEnvironment(BaseModel):
     transportation_used_for_medical_appointments: Optional[str] = None
 
 
-class Symptom(BaseModel):
+class Symptom(CsvModel):
     """Model for symptom.csv"""
     patient_id: str
     visit_symptoms_id: str
@@ -730,7 +754,7 @@ class Symptom(BaseModel):
     symptom_end_date: Optional[str] = None
 
 
-class Trial(BaseModel):
+class Trial(CsvModel):
     """Model for trial.csv"""
     patient_id: str
     trial_id: str
@@ -742,7 +766,7 @@ class Trial(BaseModel):
     clinical_trial_outcome: Optional[str] = None
 
 
-class TumorResponse(BaseModel):
+class TumorResponse(CsvModel):
     """Model for tumor_response.csv"""
     patient_id: str
     tumor_response_id: str
@@ -754,7 +778,7 @@ class TumorResponse(BaseModel):
     response_source_provider: Optional[str] = None
 
 
-class Visit(BaseModel):
+class Visit(CsvModel):
     """Model for visit.csv"""
     patient_id: str
     visit_id: str

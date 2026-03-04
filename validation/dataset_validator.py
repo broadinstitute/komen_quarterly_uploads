@@ -1,17 +1,16 @@
 """Dataset validation logic."""
-import csv
 import logging
 import re
 from io import StringIO
 from pathlib import Path
+import csv
 
+from pydantic import ValidationError
 from ops_utils.gcp_utils import GCPCloudFunctions
 
-from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file
+from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file, CSV_SCHEMA_MAP
 from models.data_models import DatasetInfo
 
-# TODO: Use the schemas outlined in csv_schemas to validate the actual contents of the CSVs (in addition to checking that all expected files are present)
-# The file contents are loaded into the data model, so they don't need to be read from the cloud repeatedly
 
 class DatasetValidator:
     """Handles validation of CSV files in main and sub datasets."""
@@ -78,8 +77,47 @@ class DatasetValidator:
         if extra_files:
             logging.warning(f"Extra CSV files in {directory_name}: {sorted(extra_files)}")
 
-        logging.info(f"Validation passed for {directory_name}: all {len(expected_files)} expected files found")
+        logging.info(f"{directory_name}: all {len(expected_files)} expected files found")
         return True
+
+    @staticmethod
+    def validate_csv_contents(file_contents_map: dict[str, list[dict]], context: str) -> bool:
+        """
+        Validate the contents of each CSV against its pydantic model.
+
+        Args:
+            file_contents_map: Mapping of file_path -> list of row dicts (already loaded)
+            context: Human-readable label for logging (e.g. "Main Dataset" or a sub dir name)
+
+        Returns:
+            True if all rows in all files pass validation, False if any row fails
+        """
+        all_valid = True
+
+        for file_path, rows in file_contents_map.items():
+            filename = Path(file_path).name
+            model = CSV_SCHEMA_MAP.get(filename)
+
+            if model is None:
+                # Metadata file or unknown file — skip schema validation
+                continue
+
+            errors_for_file = []
+            for row_num, row in enumerate(rows, start=1):
+                try:
+                    model(**row)
+                except ValidationError as e:
+                    for error in e.errors():
+                        field = " -> ".join(str(loc) for loc in error["loc"])
+                        errors_for_file.append(f"  Row {row_num}, field '{field}': {error['msg']}")
+
+            if errors_for_file:
+                logging.error(
+                    f"[{context}] Schema validation failed for {filename} "
+                    f"({len(errors_for_file)} error(s)):\n" + "\n".join(errors_for_file)
+                )
+                all_valid = False
+        return all_valid
 
     def validate_main_dataset(self, dataset_info: DatasetInfo) -> bool:
         """
@@ -181,10 +219,15 @@ class DatasetValidator:
         Returns:
             True if all validations pass, False otherwise
         """
+        valid = True
         # Validate main dataset
         if not self.validate_main_dataset(dataset_info):
             logging.error("Main dataset validation failed.")
-            return False
+            valid = False
+
+        if not self.validate_csv_contents(dataset_info.main_file_contents_map, "Main Dataset"):
+            logging.error("Main dataset content validation failed.")
+            valid = False
 
         # Validate sub datasets
         sub_validation_results = self.validate_sub_datasets(dataset_info)
@@ -193,8 +236,15 @@ class DatasetValidator:
         failed_sub_datasets = [name for name, passed in sub_validation_results.items() if not passed]
         if failed_sub_datasets:
             logging.error(f"Sub dataset validation failed for: {failed_sub_datasets}")
-            return False
+            valid = False
 
-        logging.info("All dataset validations passed successfully")
-        return True
+        # Validate contents of each sub dataset
+        for sub_dir_info in dataset_info.sub_datasets:
+            display_name = f"researcher_id_{sub_dir_info.researcher_id}_project_id_{sub_dir_info.project_id}"
+            if not self.validate_csv_contents(sub_dir_info.file_contents_map, display_name):
+                logging.error(f"Content validation failed for sub dataset: {display_name}")
+                valid = False
+        if valid:
+            logging.info("All dataset validations passed successfully")
+        return valid
 
