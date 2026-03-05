@@ -45,7 +45,7 @@ GENOMICS_BUCKET = "gs://fc-secure-ba527f7b-105c-437e-84e3-fe7e944efdec/"
 
 # Mapping File Configuration
 # Mapping file is in workspace: SFC-Research/ShareForCures Operational Data Files
-MAPPING_FILE_PATH = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/onyx_mapping/onyx_mapping.csv"
+PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/onyx_mapping/onyx_mapping.csv"
 
 # CSV containing all users cleared for genomics file access
 # Located in workspace: SFC-Research/ShareForCures Operational Data Files
@@ -73,7 +73,7 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
     Returns:
         Dictionary mapping participant_id -> sample_id (with K prefix)
     """
-    mapping_file_contents = gcp.read_file(cloud_path=MAPPING_FILE_PATH)
+    mapping_file_contents = gcp.read_file(cloud_path=PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH)
     # The mapping file is expected to have lines in the format: sample_id,participant_id
     mapping_dict = {
         # Add 'K' prefix to sample_id to match the format in the sequencing files naming
