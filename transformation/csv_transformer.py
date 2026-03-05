@@ -2,7 +2,7 @@
 
 import logging
 import csv
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from ops_utils.csv_util import Csv
@@ -52,8 +52,6 @@ class CSVTransformer:
             for row_num, row in enumerate(file_contents, start=1):
                 row[entity_col_name] = str(row_num)
                 writer.writerow(row)
-
-        logging.info(f"Added entity ID column '{entity_col_name}' to {csv_filename}")
 
     @staticmethod
     def extract_all_participant_ids_from_files(
@@ -110,8 +108,6 @@ class CSVTransformer:
             header_list=header_list
         )
 
-        logging.info(f"Converted {Path(csv_path).name} to TSV: {Path(output_path).name}")
-
     def transform_and_convert_csv(self, csv_path: str, file_contents: list[dict], output_dir: str) -> str:
         """
         Transform CSV (add entity ID) and convert to TSV for Terra upload.
@@ -141,73 +137,24 @@ class CSVTransformer:
 
     @staticmethod
     def create_sequencing_files_tsv(
-        participants: set[str],
-        genomics_bucket: str,
+        participant_files: dict[str, dict[str, Optional[str]]],
         output_path: str,
-        participant_to_sample: dict
     ) -> str:
         """
         Create a TSV file listing sequencing files for participants.
 
         Args:
-            participants: Set of participant IDs
-            genomics_bucket: Genomics files bucket path (e.g., 'gs://fc-secure-xxx/')
-            output_path: Path to write output TSV
-            participant_to_sample: Dict mapping participant_id to sample_id (with K prefix)
+            participant_files: Dict returned by GenomicsFileChecker.check_all_participants().
+                               Keys are participant_ids; values are dicts of
+                               file_type -> full GCS path if the file exists, or None.
+            output_path: Path to write output TSV.
 
         Returns:
-            Path to created TSV file
+            Path to created TSV file.
         """
-        sequencing_data = []
-
-        # Create rows for each participant
-        for idx, participant_id in enumerate(sorted(participants), start=1):
-            # Get the sample ID for this participant
-            sample_id = participant_to_sample.get(participant_id)
-            if not sample_id:
-                logging.warning(f"No sample ID found for participant {participant_id}, skipping")
-                continue
-
-            # Build file paths
-            cram_path = f"{genomics_bucket}CRAM/{sample_id}.cram"
-            crai_path = f"{genomics_bucket}CRAM/{sample_id}.cram.crai"
-            cram_md5_path = f"{genomics_bucket}CRAM/{sample_id}.cram.md5sum"
-
-            gvcf_path = f"{genomics_bucket}GVCF/{sample_id}.hard-filtered.gvcf.gz"
-            gvcf_tbi_path = f"{genomics_bucket}GVCF/{sample_id}.hard-filtered.gvcf.gz.tbi"
-
-            vcf_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz"
-            vcf_md5_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz.md5sum"
-            vcf_tbi_path = f"{genomics_bucket}VCF/{sample_id}.hard-filtered.vcf.gz.tbi"
-
-            mapping_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.mapping_metrics.csv"
-            coverage_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.qc-coverage-region-1_coverage_metrics.csv"
-            vc_metrics_path = f"{genomics_bucket}QC_Metrics/{sample_id}.vc_metrics.csv"
-
-            row_data = {
-                "entity:sequencing_files_id": str(idx),
-                "participant_id": participant_id,
-                "sample_id": sample_id,
-                "cram": cram_path,
-                "crai": crai_path,
-                "cram_md5": cram_md5_path,
-                "gvcf": gvcf_path,
-                "gvcf_tbi": gvcf_tbi_path,
-                "vcf": vcf_path,
-                "vcf_md5": vcf_md5_path,
-                "vcf_tbi": vcf_tbi_path,
-                "mapping_metrics": mapping_metrics_path,
-                "coverage_metrics": coverage_metrics_path,
-                "vc_metrics": vc_metrics_path
-            }
-
-            sequencing_data.append(row_data)
-
-        # Define headers
         header_list = [
             "entity:sequencing_files_id",
             "participant_id",
-            "sample_id",
             "cram",
             "crai",
             "cram_md5",
@@ -221,7 +168,14 @@ class CSVTransformer:
             "vc_metrics",
         ]
 
-        # Create TSV using Csv utility
+        sequencing_data = []
+        for idx, (participant_id, files) in enumerate(sorted(participant_files.items()), start=1):
+            row_data = {"entity:sequencing_files_id": str(idx), "participant_id": participant_id}
+            for file_type in header_list[2:]:  # skip the two id columns
+                # Use the file path if it exists, otherwise "NA"
+                row_data[file_type] = files.get(file_type) or "NA"
+            sequencing_data.append(row_data)
+
         Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
             list_of_dicts=sequencing_data,
             header_list=header_list

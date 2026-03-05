@@ -14,7 +14,8 @@ class WorkspaceManager:
     """Manages Terra workspace creation and data upload operations."""
 
     def __init__(self, request_util: RunRequest, billing_project: str,
-                 main_workspace_name: str, sub_workspace_name_template: str):
+                 main_workspace_name: str, sub_workspace_name_template: str,
+                 dry_run: bool = False):
         """
         Initialize WorkspaceManager.
 
@@ -23,11 +24,13 @@ class WorkspaceManager:
             billing_project: Terra billing project name
             main_workspace_name: Main workspace name
             sub_workspace_name_template: Template for sub workspace names
+            dry_run: If True, log workspace creation instead of actually creating workspaces
         """
         self.request_util = request_util
         self.billing_project = billing_project
         self.main_workspace_name = main_workspace_name
         self.sub_workspace_name_template = sub_workspace_name_template
+        self.dry_run = dry_run
 
     @staticmethod
     def format_workspace_name(project_name: str, date_created: str) -> str:
@@ -41,6 +44,7 @@ class WorkspaceManager:
         Returns:
             Formatted workspace name
         """
+        #TODO: Do we need to check all these different formats?
         # Try to parse the date - handle various formats
         if '-' in date_created:
             parts = date_created.split('-')
@@ -78,15 +82,16 @@ class WorkspaceManager:
         Returns:
             TerraWorkspace object
         """
-        # TODO CHANGE BACK, FOR TESTING ONLY
-        logging.info(f"Creating workspace: {workspace_name}")
         workspace = TerraWorkspace(
-            #billing_project=self.billing_project,
-            billing_project="ops-integration-billing",
+            billing_project="ops-integration-billing",  # TODO CHANGE BACK
             workspace_name=workspace_name,
             request_util=self.request_util
         )
-        workspace.create_workspace(continue_if_exists=continue_if_exists)
+        if self.dry_run:
+            logging.info(f"DRY RUN: Would create workspace '{workspace_name}'")
+        else:
+            logging.info(f"Creating workspace: {workspace_name}")
+            workspace.create_workspace(continue_if_exists=continue_if_exists)
         return workspace
 
     def create_sub_workspace(
