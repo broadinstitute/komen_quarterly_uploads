@@ -200,9 +200,9 @@ class DatasetValidator:
                     logging.error(f"Required field 'project_name' is missing or empty in {metadata_path}")
                     validation_results[display_name] = False
                     continue
-
+                # Set the project name and date created in the project-specific data model
                 sub_dir_info.project_name = project_name
-                sub_dir_info.date_created = metadata.get('date_created', '').strip()
+                sub_dir_info.date_created = metadata["date_created"].strip()
                 logging.info(f"Read metadata: project_name={sub_dir_info.project_name}, date_created={sub_dir_info.date_created}")
 
             validation_results[display_name] = is_valid

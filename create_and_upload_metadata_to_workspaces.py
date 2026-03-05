@@ -55,7 +55,7 @@ GENOMICS_FILE_ACCESS_CSV = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/
 # Located in workspace: SFC-Research/ShareForCures Operational Data Files
 RESEARCHER_ID_TO_EMAIL_MAPPING = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/all_researchers.csv"
 GENOMICS_FILE_ACCESS_GROUP_NAME = "Genomics-Files-Access"
-RESEARCH_ADMIN_GROUP_EMAIL = "Research-Admin@firecloud.org"
+RESEARCH_ADMIN_GROUP_EMAIL = "Research-Admins@firecloud.org"
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -174,21 +174,13 @@ def process_sub_workspaces(
             file_contents = sub_dataset.file_contents_map[csv_file_path]
             tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
-        workspace_name = determine_sub_workspace_name(
-            workspace_manager_obj=workspace_manager_obj,
-            project_id=sub_dataset.project_id,
-            researcher_id=sub_dataset.researcher_id,
-            project_name=sub_dataset.project_name,
-            date_created=sub_dataset.date_created,
-        )
-
-        ws_meta = [a for a in sub_workspace_metadata if a["workspace_name"] == workspace_name][0]
+        ws_meta = [a for a in sub_workspace_metadata if a["workspace_name"] == sub_dataset.workspace_name][0]
         sub_workspace_terra_obj = ws_meta["sub_workspace_terra_obj"]
 
         if researcher_id in [user["Researcher ID"] for user in genomics_access_metadata]:
             logging.info("Researcher has genomics access - creating sequencing files TSV for sub workspace")
             participant_files = {p: all_participant_files[p] for p in ws_meta["participants"] if p in all_participant_files}
-            sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{workspace_name}.tsv"
+            sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{sub_dataset.workspace_name}.tsv"
             csv_transformer.create_sequencing_files_tsv(
                 participant_files=participant_files,
                 output_path=str(sequencing_tsv_path),
@@ -198,16 +190,16 @@ def process_sub_workspaces(
             logging.info("Researcher does not have genomics access - skipping sequencing files TSV for sub workspace")
 
         if dry_run:
-            logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to sub workspace '{workspace_name}'")
+            logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to sub workspace '{sub_dataset.workspace_name}'")
         else:
             terra_uploader.upload_all_tsvs_to_workspace(sub_workspace_terra_obj, tsv_files)
-            logging.info(f"Completed upload to {workspace_name}: {len(tsv_files)} files")
+            logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(tsv_files)} files")
 
         researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
         if dry_run:
             if researcher_email:
-                logging.info(f"DRY RUN: Would grant READER access to '{researcher_email[0]}' on workspace '{workspace_name}'")
-            logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{workspace_name}'")
+                logging.info(f"DRY RUN: Would grant READER access to '{researcher_email[0]}' on workspace '{sub_dataset.workspace_name}'")
+            logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{sub_dataset.workspace_name}'")
         else:
             if researcher_email:
                 sub_workspace_terra_obj.update_user_acl(
@@ -269,7 +261,7 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
                 sub_datasets_dict[key]["files"].append(file_path)
                 sub_datasets_dict[key]["contents"][file_path] = contents_as_list
 
-    sub_dataset_dirs = [
+    sub_datasets = [
         SubDatasetInfo(
             files=data["files"],
             file_contents_map=data["contents"],
@@ -282,7 +274,7 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
     return DatasetInfo(
         main_dataset_files=main_files,
         main_file_contents_map=main_file_contents,
-        sub_datasets=sub_dataset_dirs
+        sub_datasets=sub_datasets
     )
 
 def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> list[dict]:
@@ -290,20 +282,6 @@ def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> l
     csv_text = file_contents.lstrip("\ufeff")
     reader = csv.DictReader(StringIO(csv_text))
     return list(reader)
-
-# TODO is this necessary? Seems like we never have the project_name and date_created metadata for sub workspaces
-def determine_sub_workspace_name(
-        workspace_manager_obj: WorkspaceManager,
-        project_id: int,
-        researcher_id: int,
-        project_name: Optional[str],
-        date_created: Optional[str]
-    ) -> str:
-
-    if project_name and date_created:
-        return workspace_manager_obj.format_workspace_name(project_name=project_name, date_created=date_created)
-    else:
-        return SUB_WORKSPACE_NAME_TEMPLATE.format(project_id=project_id, researcher_id=researcher_id)
 
 def add_researchers_with_genomics_access_to_group(file_access_contents: list[dict], request_util_obj: RunRequest, dry_run: bool = False) -> None:
     emails_with_genomic_file_access = [row["Email"] for row in file_access_contents]
@@ -360,7 +338,6 @@ def main():
         request_util=request_util,
         billing_project=BILLING_PROJECT,
         main_workspace_name=MAIN_WORKSPACE_NAME,
-        sub_workspace_name_template=SUB_WORKSPACE_NAME_TEMPLATE,
         dry_run=dry_run,
     )
 
@@ -374,16 +351,8 @@ def main():
 
     sub_workspace_metadata = []
     for sub_dataset in dataset_info.sub_datasets:
-        workspace_name = determine_sub_workspace_name(
-            workspace_manager_obj=workspace_manager,
-            project_id=sub_dataset.project_id,
-            researcher_id=sub_dataset.researcher_id,
-            project_name=sub_dataset.project_name,
-            date_created=sub_dataset.date_created
-        )
 
-        sub_workspace_terra_obj = sub_workspaces[workspace_name]
-
+        sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
         logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
         sub_participants = csv_transformer.extract_all_participant_ids_from_files(
             file_contents_map=sub_dataset.file_contents_map
@@ -391,12 +360,12 @@ def main():
 
         sub_workspace_metadata.append(
             {
-                "workspace_name": workspace_name,
+                "workspace_name": sub_dataset.workspace_name,
                 "participants": sub_participants,
                 "sub_workspace_terra_obj": sub_workspace_terra_obj,
             }
         )
-        logging.info(f"Workspace '{workspace_name}' has {len(sub_participants)} participants")
+        logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants")
 
     # Check genomics file existence once using all participants from the main dataset
     all_main_participants = csv_transformer.extract_all_participant_ids_from_files(
@@ -453,4 +422,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
