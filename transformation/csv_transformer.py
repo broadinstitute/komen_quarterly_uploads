@@ -103,7 +103,7 @@ class CSVTransformer:
             csv_data = []
 
         # Write as TSV with tab delimiter
-        Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
+        Csv(file_path=output_path, delimiter='\t', verbose=False).create_tsv_from_list_of_dicts(
             list_of_dicts=csv_data,
             header_list=header_list
         )
@@ -176,7 +176,7 @@ class CSVTransformer:
                 row_data[file_type] = files.get(file_type) or "NA"
             sequencing_data.append(row_data)
 
-        Csv(file_path=output_path, delimiter='\t').create_tsv_from_list_of_dicts(
+        Csv(file_path=output_path, delimiter='\t', verbose=False).create_tsv_from_list_of_dicts(
             list_of_dicts=sequencing_data,
             header_list=header_list
         )
