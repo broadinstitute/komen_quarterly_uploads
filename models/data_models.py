@@ -1,6 +1,6 @@
 """Data models for Komen Quarterly Uploads."""
 
-from typing import Optional, Any
+from typing import Any
 from dataclasses import dataclass, field
 
 
