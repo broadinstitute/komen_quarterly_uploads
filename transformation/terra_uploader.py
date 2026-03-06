@@ -56,6 +56,7 @@ class TerraUploader:
         for tsv_path in tsv_files:
             table_name = Path(tsv_path).stem  # e.g. "biomarker" from "biomarker.tsv"
             if table_name in TABLE_COLUMN_ORDER:
+                # table name will be same as file + "_table" suffix, e.g. "biomarker_table"
                 column_order_dict[f'{table_name}_table'] = TABLE_COLUMN_ORDER[table_name]
             elif _METADATA_TABLE_PATTERN.match(table_name):
                 # Dynamic name like researcher_id_62_project_id_115_metadata — reuse the shared definition
