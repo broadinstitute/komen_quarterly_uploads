@@ -36,7 +36,6 @@ class TerraUploader:
         Returns:
             True if successful
         """
-        logging.info(f"Uploading {Path(tsv_path).name} to workspace {workspace.workspace_name}")
         workspace.upload_metadata_to_workspace_table(entities_tsv=tsv_path)
         return True
 
@@ -57,10 +56,10 @@ class TerraUploader:
         for tsv_path in tsv_files:
             table_name = Path(tsv_path).stem  # e.g. "biomarker" from "biomarker.tsv"
             if table_name in TABLE_COLUMN_ORDER:
-                column_order_dict[table_name] = TABLE_COLUMN_ORDER[table_name]
+                column_order_dict[f'{table_name}_table'] = TABLE_COLUMN_ORDER[table_name]
             elif _METADATA_TABLE_PATTERN.match(table_name):
                 # Dynamic name like researcher_id_62_project_id_115_metadata — reuse the shared definition
-                column_order_dict[table_name] = TABLE_COLUMN_ORDER["researcher_project_metadata"]
+                column_order_dict[f'{table_name}_table'] = TABLE_COLUMN_ORDER["researcher_project_metadata"]
             else:
                 logging.warning(
                     f"No column order defined for table '{table_name}' — skipping column order for this table"
@@ -87,6 +86,7 @@ class TerraUploader:
         Returns:
             True if all successful
         """
+        logging.info(f"Uploading all TSV files to workspace {workspace.workspace_name}")
         for tsv_path in tsv_files:
             self.upload_tsv_to_workspace(workspace, tsv_path)
 
