@@ -13,8 +13,9 @@ class SubDatasetInfo:
     file_contents_map: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     researcher_id: int = None
     project_id: int = None
-    project_name: Optional[str] = None
-    date_created: Optional[str] = None
+    project_name: str = None
+    date_created: str = None
+    workspace_name: str = None
 
 
 @dataclass
