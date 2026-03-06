@@ -57,6 +57,7 @@ RESEARCHER_ID_TO_EMAIL_MAPPING = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec5
 GENOMICS_FILE_ACCESS_GROUP_NAME = "Genomics-Files-Access"
 RESEARCH_ADMIN_GROUP_EMAIL = "Research-Admins@firecloud.org"
 
+
 def get_args() -> Namespace:
     """Parse command line arguments."""
     parser = ArgumentParser(description="Find new csvs in SFTP site and create new workspaces and upload metadata to them")
@@ -109,7 +110,6 @@ def process_main_workspace(
     tsv_files = []
 
     for csv_file_path in dataset_info.main_dataset_files:
-        logging.info(f"Transforming {Path(csv_file_path).name}...")
         file_contents = dataset_info.main_file_contents_map[csv_file_path]
         tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
@@ -139,7 +139,7 @@ def process_sub_workspaces(
     researcher_id_mapping: list[dict],
     gcp: GCPCloudFunctions,
     dry_run: bool = False,
-) -> None:
+) -> list[str]:
     """
     Process and upload data for all sub workspaces.
 
@@ -157,7 +157,12 @@ def process_sub_workspaces(
         researcher_id_mapping: List of dictionaries mapping ALL researchers IDs to emails
         gcp: Shared GCPCloudFunctions instance
         dry_run: If True, log what would be uploaded/modified without actually doing it.
+
+    Returns:
+        List of mapping failure strings for any researcher IDs not found in the researcher mapping.
     """
+    mapping_failures = []
+
     for sub_dataset in dataset_info.sub_datasets:
         tsv_files = []
 
@@ -170,7 +175,6 @@ def process_sub_workspaces(
                 if researcher_id != sub_dataset.researcher_id:
                     logging.warning(f"Researcher ID mismatch in {csv_file_path}: expected {sub_dataset.researcher_id}, found {researcher_id}")
 
-            logging.info(f"Transforming {Path(csv_file_path).name}...")
             file_contents = sub_dataset.file_contents_map[csv_file_path]
             tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
@@ -196,6 +200,13 @@ def process_sub_workspaces(
             logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(tsv_files)} files")
 
         researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
+        if not researcher_email:
+            failure = (
+                f"Researcher ID '{researcher_id}' (workspace '{sub_dataset.workspace_name}') "
+                f"not found in researcher mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
+            )
+            mapping_failures.append(failure)
+            logging.warning(failure)
         if dry_run:
             if researcher_email:
                 logging.info(f"DRY RUN: Would grant READER access to '{researcher_email[0]}' on workspace '{sub_dataset.workspace_name}'")
@@ -211,6 +222,9 @@ def process_sub_workspaces(
                 )
             logging.info("Adding 'Research-Admin' group as owner to project-specific workspace")
             sub_workspace_terra_obj.update_user_acl(email=RESEARCH_ADMIN_GROUP_EMAIL, access_level="OWNER")
+
+    return mapping_failures
+
 
 def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunctions) -> DatasetInfo:
     """
@@ -380,6 +394,17 @@ def main():
     )
     all_participant_files = genomics_checker.check_all_participants(all_main_participants)
 
+    # Record any participants that had no entry in the onyx mapping CSV
+    mapping_failures = []
+    for participant_id in all_main_participants:
+        if participant_id not in all_participant_files:
+            failure = (
+                f"{sub_dataset.workspace_name}: Participant '{participant_id}' not found in onyx mapping "
+                f"({PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH})"
+            )
+            mapping_failures.append(failure)
+            logging.warning(failure)
+
 
     # Add researchers with clearance for genomics file access to the genomics access group
     logging.info(f"Adding researchers with genomics access to {GENOMICS_FILE_ACCESS_GROUP_NAME} group...")
@@ -401,7 +426,7 @@ def main():
     )
 
     # Process sub workspaces
-    process_sub_workspaces(
+    sub_mapping_failures = process_sub_workspaces(
         dataset_info=dataset_info,
         sub_workspace_metadata=sub_workspace_metadata,
         csv_transformer=csv_transformer,
@@ -414,11 +439,21 @@ def main():
         gcp=gcp,
         dry_run=dry_run,
     )
+    mapping_failures.extend(sub_mapping_failures)
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
 
     logging.info(f"Successfully processed 1 main workspaces and {len(sub_workspace_metadata)} sub-workspace(s)")
+
+    if mapping_failures:
+        for failure in mapping_failures:
+            logging.error(f"MAPPING FAILURE: {failure}")
+        raise RuntimeError(
+            f"All workspace creation and metadata uploads completed successfully, but "
+            f"{len(mapping_failures)} mapping failure(s) were encountered. "
+            f"See MAPPING FAILURE log entries above for details."
+        )
 
 if __name__ == '__main__':
     main()
