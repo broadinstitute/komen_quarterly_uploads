@@ -76,7 +76,6 @@ class WorkspaceManager:
         if self.dry_run:
             logging.info(f"DRY RUN: Would create workspace '{workspace_name}'")
         else:
-            logging.info(f"Creating workspace: {workspace_name}")
             workspace.create_workspace(continue_if_exists=continue_if_exists)
         return workspace
 
