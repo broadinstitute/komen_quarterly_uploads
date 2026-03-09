@@ -232,14 +232,14 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
 
     Separates files into the main dataset (under shareforcures_dataset_*/) and
     sub datasets (under researcher_id_*_project_id_*/).
-    Reads all file contents in a single multithreaded call then organises them.
+    Read all file contents in a single multithreaded call then organize them.
 
     Args:
         all_csv_paths: List of full GCS file paths to CSV files
         gcp: Shared GCPCloudFunctions instance
 
     Returns:
-        DatasetInfo object with files organised by dataset type and their contents
+        DatasetInfo object with files organized by dataset type and their contents
 
     Example paths:
         - Main: "example_main_dir/shareforcures_dataset_2026_02/file.csv"
@@ -340,6 +340,7 @@ def main():
     if not validator.validate_all(dataset_info):
         logging.error("Dataset validation failed. Exiting.")
         exit(1)
+    exit()
 
     # Load participant to sample ID mapping
     participant_to_sample = load_participant_to_sample_mapping(gcp)

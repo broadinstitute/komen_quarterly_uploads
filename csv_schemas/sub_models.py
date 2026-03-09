@@ -3,8 +3,8 @@ Pydantic models for sub_dataset CSV files.
 These models are designed to validate data converted from CSV to list of dictionaries.
 """
 
-from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, model_validator, Field
+from typing import Optional, Any, Annotated
+from pydantic import BaseModel, ConfigDict, model_validator, BeforeValidator
 
 
 class CsvModel(BaseModel):
@@ -30,13 +30,16 @@ class CsvModel(BaseModel):
         missing = [field for field in cls.model_fields if field not in data]
         if missing:
             raise ValueError(f"Missing columns (present in model but not in CSV): {missing}")
+        return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def  convert_yes_no_to_bool(cls, data: Any) -> Any:
         # Convert "Yes"/"No" to boolean True/False for any fields that are Optional[bool]
         for field_name, field_info in cls.model_fields.items():
             # Check if the field is typed as bool (or Optional[bool])
             if field_info.annotation is bool or field_info.annotation == Optional[bool]:
                 value = data.get(field_name)
-
                 if isinstance(value, str):
                     clean_val = value.strip().lower()
                     if clean_val == "yes":
@@ -45,9 +48,34 @@ class CsvModel(BaseModel):
                         data[field_name] = False
                     elif clean_val == "":
                         data[field_name] = None
-
         return data
 
+# Validator for optional year fields
+def parse_optional_year(v: Any) -> Optional[int]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        if v == "": # Handle empty cells
+            return None
+        if v.isdigit(): # Convert "2021" to 2021
+            year = int(v)
+            # Validate 4-digit range
+            if 1000 <= year <= 9999:
+                return year
+            else:
+                raise ValueError(f"Year must be a 4-digit integer (1000-9999), got {year}")
+        else:
+            raise ValueError(f"Year must be a numeric string or empty, got '{v}'")
+    if isinstance(v, int):
+        if 1000 <= v <= 9999:
+            return v
+        else:
+            raise ValueError(f"Year must be a 4-digit integer (1000-9999), got {v}")
+    raise ValueError(f"Year must be an integer or string, got type {type(v).__name__}")
+
+# 3. Create reusable Year types
+OptionalYearInt = Annotated[Optional[int], BeforeValidator(parse_optional_year)]
 
 class ResearcherProjectMetadata(CsvModel):
     """Model for researcher_id_62_project_id_115_metadata.csv"""
@@ -74,9 +102,9 @@ class Demographics(CsvModel):
     marital_status: Optional[str] = None
     pregnancy_cancer: Optional[str] = None
     menopause_yn: Optional[bool]
-    menopause: Optional[int] = Field(None, ge=1000, le=9999)
+    menopause: OptionalYearInt = None
     vital_status: Optional[str] = None
-    death_date: Optional[int] = Field(None, ge=1000, le=9999)
+    death_date: OptionalYearInt = None
     death_source: Optional[str] = None
     primary_residential_type: Optional[str] = None
     nic_status: Optional[str] = None
@@ -103,7 +131,7 @@ class BiomarkerTestDetail(CsvModel):
     biomarker_id: str
     biomarker_detail_id: str
     biomarker_name: Optional[str] = None
-    biomarker_result_date: Optional[int] = Field(None, ge=1000, le=9999)
+    biomarker_result_date: OptionalYearInt = None
     biomarker_result_status: Optional[str] = None
     biomarker_result_status_other: Optional[str] = None
     biomarker_result_units: Optional[str] = None
@@ -116,7 +144,7 @@ class BiomarkersGenes(CsvModel):
     biomarker_id: str
     biomarker_gene_id: str
     biomarker_gene: Optional[str] = None
-    biomarker_gene_date: Optional[int] = Field(None, ge=1000, le=9999)
+    biomarker_gene_date: OptionalYearInt = None
     biomarker_gene_finding: Optional[str] = None
     biomarker_gene_variant_type: Optional[str] = None
 
@@ -134,7 +162,7 @@ class DiseaseCharacteristic(CsvModel):
     m_number_initial_dx: Optional[str] = None
     grade_initial_dx: Optional[str] = None
     group_stage_initial_dx: Optional[str] = None
-    group_stage_dx_date: Optional[int] = Field(None, ge=1000, le=9999)
+    group_stage_dx_date: OptionalYearInt = None
     progression_yn: Optional[bool]
 
 
@@ -161,7 +189,7 @@ class DiseaseCharacteristicsProgression(CsvModel):
     m_number_progression_dx: Optional[str] = None
     grade_progression_dx: Optional[str] = None
     group_stage_progression: Optional[str] = None
-    group_stage_progression_date: Optional[str] = Field(None, ge=1000, le=9999)
+    group_stage_progression_date: OptionalYearInt = None
 
 
 class DiseaseCharacteristicsProgressionSite(CsvModel):
@@ -229,7 +257,6 @@ class FamilyHistoryBiologicalSiblings(CsvModel):
     sibling_diagnosed_second_cancer: Optional[str] = None
     sibling_second_cancer_type: Optional[str] = None
     sibling_age_second_cancer_diagnosis: Optional[str] = None
-    sibling_diagnosed_cancer: Optional[bool]
 
 
 class FamilyHistoryBiologicalSiblingsIntro(CsvModel):
@@ -308,8 +335,8 @@ class Imaging(CsvModel):
     patient_id: str
     imaging_id: str
     imaging_yn: Optional[bool]
-    imaging_perform_date: Optional[int] = Field(None, ge=1000, le=9999)
-    imaging_interpret_date: Optional[int] = Field(None, ge=1000, le=9999)
+    imaging_perform_date: OptionalYearInt = None
+    imaging_interpret_date: OptionalYearInt = None
     imaging_finding: Optional[str] = None
     imaging_finding_detail: Optional[str] = None
     imaging_score: Optional[str] = None
@@ -329,8 +356,8 @@ class Lab(CsvModel):
     lab_test_name: Optional[str] = None
     lab_result: Optional[str] = None
     lab_result_unit: Optional[str] = None
-    lab_collect_date: Optional[int] = Field(None, ge=1000, le=9999)
-    lab_result_date: Optional[int] = Field(None, ge=1000, le=9999)
+    lab_collect_date: OptionalYearInt = None
+    lab_result_date: OptionalYearInt = None
     lab_specimen_type: Optional[str] = None
 
 
@@ -340,9 +367,9 @@ class MedList(CsvModel):
     med_id: str
     med_yn: Optional[bool]
     med_name: Optional[str] = None
-    med_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    med_start_date: OptionalYearInt = None
     med_end_yn: Optional[bool]
-    med_end_date: Optional[int] = Field(None, ge=1000, le=9999)
+    med_end_date: OptionalYearInt = None
 
 
 class PatientEnrollmentStatus(CsvModel):
@@ -383,7 +410,7 @@ class PatientProfileEligibility(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    date_of_birth: Optional[int] = Field(None, ge=1000, le=9999)
+    date_of_birth: OptionalYearInt = None
     year_of_first_breast_cancer_diagnosis: Optional[str] = None
 
 
@@ -410,8 +437,8 @@ class PatientProfileProviderInfo(CsvModel):
     patient_task_id: Optional[str] = None
     breast_cancer_care_state: Optional[str] = None
     breast_cancer_care_currently_on_treatment: Optional[str] = None
-    breast_cancer_care_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    breast_cancer_care_end_date: Optional[int] = Field(None, ge=1000, le=9999)
+    breast_cancer_care_start_date: OptionalYearInt = None
+    breast_cancer_care_end_date: OptionalYearInt = None
     has_genetic_test: Optional[str] = None
     genetic_test: Optional[str] = None
 
@@ -434,10 +461,10 @@ class Payor(CsvModel):
     payor_yn: Optional[bool]
     payor: Optional[str] = None
     insurance_type: Optional[str] = None
-    payor_effective_date: Optional[int] = Field(None, ge=1000, le=9999)
+    payor_effective_date: OptionalYearInt = None
     payor_date: Optional[str] = None
     insurance_status: Optional[str] = None
-    disenroll_date: Optional[int] = Field(None, ge=1000, le=9999)
+    disenroll_date: OptionalYearInt = None
 
 
 class PerformanceScore(CsvModel):
@@ -445,7 +472,7 @@ class PerformanceScore(CsvModel):
     patient_id: str
     ps_id: str
     ps_yn: Optional[bool]
-    ps_date: Optional[int] = Field(None, ge=1000, le=9999)
+    ps_date: OptionalYearInt = None
     ps_type: Optional[str] = None
     ecog_score: Optional[str] = None
     karnofsky_score: Optional[str] = None
@@ -460,7 +487,7 @@ class Pro(CsvModel):
     pro_topic: Optional[str] = None
     pro_result_quantitative: Optional[str] = None
     pro_result_qualitative: Optional[str] = None
-    pro_date: Optional[int] = Field(None, ge=1000, le=9999)
+    pro_date: OptionalYearInt = None
 
 
 class ProblemList(CsvModel):
@@ -469,8 +496,8 @@ class ProblemList(CsvModel):
     problem_list_id: str
     problem_list_yn: Optional[bool]
     diagnosis: Optional[str] = None
-    diagnosis_date: Optional[int] = Field(None, ge=1000, le=9999)
-    diagnosis_documented_date: Optional[int] = Field(None, ge=1000, le=9999)
+    diagnosis_date: OptionalYearInt = None
+    diagnosis_documented_date: OptionalYearInt = None
 
 
 class Procedures(CsvModel):
@@ -483,8 +510,8 @@ class Procedures(CsvModel):
     procedure_location: Optional[str] = None
     tumor_dimension: Optional[str] = None
     tumor_dimension_unit: Optional[str] = None
-    procedure_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    procedure_stop_date: Optional[int] = Field(None, ge=1000, le=9999)
+    procedure_start_date: OptionalYearInt = None
+    procedure_stop_date: OptionalYearInt = None
 
 
 class QualityOfLifeGeneral(CsvModel):
@@ -633,8 +660,8 @@ class RadiationTherapy(CsvModel):
     radiation_total_fractions_received: Optional[str] = None
     radiation_discontinuation: Optional[str] = None
     radiation_dc_reason: Optional[str] = None
-    radiation_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    radiation_end_date: Optional[int] = Field(None, ge=1000, le=9999)
+    radiation_start_date: OptionalYearInt = None
+    radiation_end_date: OptionalYearInt = None
 
 
 class Regimen(CsvModel):
@@ -647,8 +674,8 @@ class Regimen(CsvModel):
     regimen_drugs: Optional[str] = None
     regimen_route_of_administration: Optional[str] = None
     regimen_intent: Optional[str] = None
-    regimen_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    regimen_end_date: Optional[int] = Field(None, ge=1000, le=9999)
+    regimen_start_date: OptionalYearInt = None
+    regimen_end_date: OptionalYearInt = None
     regimen_discontinuation: Optional[str] = None
     regimen_dc_reason: Optional[str] = None
 
@@ -770,8 +797,8 @@ class Symptom(CsvModel):
     visit_id: str
     symptom_yn: Optional[bool]
     symptom: Optional[str] = None
-    symptom_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    symptom_end_date: Optional[int] = Field(None, ge=1000, le=9999)
+    symptom_start_date: OptionalYearInt = None
+    symptom_end_date: OptionalYearInt = None
 
 
 class Trial(CsvModel):
@@ -781,8 +808,8 @@ class Trial(CsvModel):
     clinical_trial_yn: Optional[bool]
     trial_code: Optional[str] = None
     trial_phase: Optional[str] = None
-    trial_enroll_date: Optional[int] = Field(None, ge=1000, le=9999)
-    trial_complete_date: Optional[int] = Field(None, ge=1000, le=9999)
+    trial_enroll_date: OptionalYearInt = None
+    trial_complete_date: OptionalYearInt = None
     clinical_trial_outcome: Optional[str] = None
 
 
@@ -791,7 +818,7 @@ class TumorResponse(CsvModel):
     patient_id: str
     tumor_response_id: str
     tumor_response_yn: Optional[bool]
-    response_date: Optional[int] = Field(None, ge=1000, le=9999)
+    response_date: OptionalYearInt = None
     response_result: Optional[str] = None
     response_source_biopsy: Optional[str] = None
     response_source_imaging: Optional[str] = None
@@ -805,5 +832,5 @@ class Visit(CsvModel):
     visit_yn: Optional[bool]
     visit_type: Optional[str] = None
     speciality_dept: Optional[str] = None
-    presented_date: Optional[int] = Field(None, ge=1000, le=9999)
-    leave_date: Optional[int] = Field(None, ge=1000, le=9999)
+    presented_date: OptionalYearInt = None
+    leave_date: OptionalYearInt = None
