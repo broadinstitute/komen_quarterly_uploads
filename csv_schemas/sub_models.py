@@ -263,7 +263,7 @@ class FamilyHistoryOtherFamilyMembersRelatives(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    cancer_diagnosis: Optional[str] = None
+    cancer_diagnosis: Optional[bool]
     age_first_diagnosis: Optional[str] = None
     relative: Optional[str] = None
     relative_type: Optional[str] = None
@@ -276,11 +276,11 @@ class FamilyHistoryYou(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    received_genetic_counseling: Optional[str] = None
-    has_genetic_test: Optional[str] = None
-    genetic_test_indicates_mutation: Optional[str] = None
-    family_has_ashkenazi_ancestry: Optional[str] = None
-    is_adopted: Optional[str] = None
+    received_genetic_counseling: Optional[bool]
+    has_genetic_test: Optional[bool]
+    genetic_test_indicates_mutation: Optional[bool]
+    family_has_ashkenazi_ancestry: Optional[bool]
+    is_adopted: Optional[bool]
     family_members_with_history_answers: Optional[str] = None
 
 
@@ -288,9 +288,9 @@ class Imaging(CsvModel):
     """Model for imaging.csv"""
     patient_id: str
     imaging_id: str
-    imaging_yn: Optional[str] = None
-    imaging_perform_date: Optional[str] = None
-    imaging_interpret_date: Optional[str] = None
+    imaging_yn: Optional[bool]
+    imaging_perform_date: Optional[int] = Field(None, ge=1000, le=9999)
+    imaging_interpret_date: Optional[int] = Field(None, ge=1000, le=9999)
     imaging_finding: Optional[str] = None
     imaging_finding_detail: Optional[str] = None
     imaging_score: Optional[str] = None
@@ -306,12 +306,12 @@ class Lab(CsvModel):
     """Model for lab.csv"""
     patient_id: str
     lab_id: str
-    labs_yn: Optional[str] = None
+    labs_yn: Optional[bool]
     lab_test_name: Optional[str] = None
     lab_result: Optional[str] = None
     lab_result_unit: Optional[str] = None
-    lab_collect_date: Optional[str] = None
-    lab_result_date: Optional[str] = None
+    lab_collect_date: Optional[int] = Field(None, ge=1000, le=9999)
+    lab_result_date: Optional[int] = Field(None, ge=1000, le=9999)
     lab_specimen_type: Optional[str] = None
 
 
@@ -319,11 +319,11 @@ class MedList(CsvModel):
     """Model for med_list.csv"""
     patient_id: str
     med_id: str
-    med_yn: Optional[str] = None
+    med_yn: Optional[bool]
     med_name: Optional[str] = None
-    med_start_date: Optional[str] = None
+    med_start_date: Optional[int] = Field(None, ge=1000, le=9999)
     med_end_yn: Optional[str] = None
-    med_end_date: Optional[str] = None
+    med_end_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class PatientEnrollmentStatus(CsvModel):
@@ -364,7 +364,7 @@ class PatientProfileEligibility(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    date_of_birth: Optional[str] = None
+    date_of_birth: Optional[int] = Field(None, ge=1000, le=9999)
     year_of_first_breast_cancer_diagnosis: Optional[str] = None
 
 
@@ -391,8 +391,8 @@ class PatientProfileProviderInfo(CsvModel):
     patient_task_id: Optional[str] = None
     breast_cancer_care_state: Optional[str] = None
     breast_cancer_care_currently_on_treatment: Optional[str] = None
-    breast_cancer_care_start_date: Optional[str] = None
-    breast_cancer_care_end_date: Optional[str] = None
+    breast_cancer_care_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    breast_cancer_care_end_date: Optional[int] = Field(None, ge=1000, le=9999)
     has_genetic_test: Optional[str] = None
     genetic_test: Optional[str] = None
 
@@ -412,21 +412,21 @@ class Payor(CsvModel):
     """Model for payor.csv"""
     patient_id: str
     payor_id: str
-    payor_yn: Optional[str] = None
+    payor_yn: Optional[bool]
     payor: Optional[str] = None
     insurance_type: Optional[str] = None
-    payor_effective_date: Optional[str] = None
+    payor_effective_date: Optional[int] = Field(None, ge=1000, le=9999)
     payor_date: Optional[str] = None
     insurance_status: Optional[str] = None
-    disenroll_date: Optional[str] = None
+    disenroll_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class PerformanceScore(CsvModel):
     """Model for performance_score.csv"""
     patient_id: str
     ps_id: str
-    ps_yn: Optional[str] = None
-    ps_date: Optional[str] = None
+    ps_yn: Optional[bool]
+    ps_date: Optional[int] = Field(None, ge=1000, le=9999)
     ps_type: Optional[str] = None
     ecog_score: Optional[str] = None
     karnofsky_score: Optional[str] = None
@@ -436,36 +436,36 @@ class Pro(CsvModel):
     """Model for pro.csv"""
     patient_id: str
     pro_id: str
-    pro_yn: Optional[str] = None
+    pro_yn: Optional[bool]
     pro_name: Optional[str] = None
     pro_topic: Optional[str] = None
     pro_result_quantitative: Optional[str] = None
     pro_result_qualitative: Optional[str] = None
-    pro_date: Optional[str] = None
+    pro_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class ProblemList(CsvModel):
     """Model for problem_list.csv"""
     patient_id: str
     problem_list_id: str
-    problem_list_yn: Optional[str] = None
+    problem_list_yn: Optional[bool]
     diagnosis: Optional[str] = None
-    diagnosis_date: Optional[str] = None
-    diagnosis_documented_date: Optional[str] = None
+    diagnosis_date: Optional[int] = Field(None, ge=1000, le=9999)
+    diagnosis_documented_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class Procedures(CsvModel):
     """Model for procedures.csv"""
     patient_id: str
     procedure_id: str
-    procedure_yn: Optional[str] = None
+    procedure_yn: Optional[bool]
     procedure_provenance: Optional[str] = None
     procedure_name: Optional[str] = None
     procedure_location: Optional[str] = None
     tumor_dimension: Optional[str] = None
     tumor_dimension_unit: Optional[str] = None
-    procedure_start_date: Optional[str] = None
-    procedure_stop_date: Optional[str] = None
+    procedure_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    procedure_stop_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class QualityOfLifeGeneral(CsvModel):
