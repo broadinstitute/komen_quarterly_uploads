@@ -17,6 +17,7 @@ class CsvModel(BaseModel):
     - Extra columns in the CSV (not defined in the model) also fail validation.
       Headers must match the model exactly.
     """
+    # Doesn't allow for any extra headers in the CSV that aren't defined as fields on the model
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="before")
@@ -24,9 +25,27 @@ class CsvModel(BaseModel):
     def require_all_columns_present(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
+
+        # Check for missing columns
         missing = [field for field in cls.model_fields if field not in data]
         if missing:
             raise ValueError(f"Missing columns (present in model but not in CSV): {missing}")
+
+        # Convert "Yes"/"No" to boolean True/False for any fields that are Optional[bool]
+        for field_name, field_info in cls.model_fields.items():
+            # Check if the field is typed as bool (or Optional[bool])
+            if field_info.annotation is bool or field_info.annotation == Optional[bool]:
+                value = data.get(field_name)
+
+                if isinstance(value, str):
+                    clean_val = value.strip().lower()
+                    if clean_val == "yes":
+                        data[field_name] = True
+                    elif clean_val == "no":
+                        data[field_name] = False
+                    elif clean_val == "":
+                        data[field_name] = None
+
         return data
 
 
