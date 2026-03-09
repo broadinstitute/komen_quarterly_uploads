@@ -142,7 +142,7 @@ class DiseaseCharacteristicsProgression(CsvModel):
     m_number_progression_dx: Optional[str] = None
     grade_progression_dx: Optional[str] = None
     group_stage_progression: Optional[str] = None
-    group_stage_progression_date: Optional[str] = None = Field(None, ge=1000, le=9999)
+    group_stage_progression_date: Optional[str] = Field(None, ge=1000, le=9999)
 
 
 class DiseaseCharacteristicsProgressionSite(CsvModel):
@@ -322,7 +322,7 @@ class MedList(CsvModel):
     med_yn: Optional[bool]
     med_name: Optional[str] = None
     med_start_date: Optional[int] = Field(None, ge=1000, le=9999)
-    med_end_yn: Optional[str] = None
+    med_end_yn: Optional[bool]
     med_end_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
@@ -603,7 +603,7 @@ class RadiationTherapy(CsvModel):
     """Model for radiation_therapy.csv"""
     patient_id: str
     radiation_therapy_id: str
-    radiation_therapy_yn: Optional[str] = None
+    radiation_therapy_yn: Optional[bool]
     radiation_clinical_trial_yn: Optional[str] = None
     radiation_energy: Optional[str] = None
     radiation_technique: Optional[str] = None
@@ -614,22 +614,22 @@ class RadiationTherapy(CsvModel):
     radiation_total_fractions_received: Optional[str] = None
     radiation_discontinuation: Optional[str] = None
     radiation_dc_reason: Optional[str] = None
-    radiation_start_date: Optional[str] = None
-    radiation_end_date: Optional[str] = None
+    radiation_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    radiation_end_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class Regimen(CsvModel):
     """Model for regimen.csv"""
     patient_id: str
     regimen_id: str
-    regimen_yn: Optional[str] = None
-    regimen_clinical_trial_yn: Optional[str] = None
+    regimen_yn: Optional[bool]
+    regimen_clinical_trial_yn: Optional[bool]
     regimen_name: Optional[str] = None
     regimen_drugs: Optional[str] = None
     regimen_route_of_administration: Optional[str] = None
     regimen_intent: Optional[str] = None
-    regimen_start_date: Optional[str] = None
-    regimen_end_date: Optional[str] = None
+    regimen_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    regimen_end_date: Optional[int] = Field(None, ge=1000, le=9999)
     regimen_discontinuation: Optional[str] = None
     regimen_dc_reason: Optional[str] = None
 
@@ -749,21 +749,21 @@ class Symptom(CsvModel):
     patient_id: str
     visit_symptoms_id: str
     visit_id: str
-    symptom_yn: Optional[str] = None
+    symptom_yn: Optional[bool]
     symptom: Optional[str] = None
-    symptom_start_date: Optional[str] = None
-    symptom_end_date: Optional[str] = None
+    symptom_start_date: Optional[int] = Field(None, ge=1000, le=9999)
+    symptom_end_date: Optional[int] = Field(None, ge=1000, le=9999)
 
 
 class Trial(CsvModel):
     """Model for trial.csv"""
     patient_id: str
     trial_id: str
-    clinical_trial_yn: Optional[str] = None
+    clinical_trial_yn: Optional[bool]
     trial_code: Optional[str] = None
     trial_phase: Optional[str] = None
-    trial_enroll_date: Optional[str] = None
-    trial_complete_date: Optional[str] = None
+    trial_enroll_date: Optional[int] = Field(None, ge=1000, le=9999)
+    trial_complete_date: Optional[int] = Field(None, ge=1000, le=9999)
     clinical_trial_outcome: Optional[str] = None
 
 
@@ -771,8 +771,8 @@ class TumorResponse(CsvModel):
     """Model for tumor_response.csv"""
     patient_id: str
     tumor_response_id: str
-    tumor_response_yn: Optional[str] = None
-    response_date: Optional[str] = None
+    tumor_response_yn: Optional[bool]
+    response_date: Optional[int] = Field(None, ge=1000, le=9999)
     response_result: Optional[str] = None
     response_source_biopsy: Optional[str] = None
     response_source_imaging: Optional[str] = None
@@ -783,8 +783,8 @@ class Visit(CsvModel):
     """Model for visit.csv"""
     patient_id: str
     visit_id: str
-    visit_yn: Optional[str] = None
+    visit_yn: Optional[bool]
     visit_type: Optional[str] = None
     speciality_dept: Optional[str] = None
-    presented_date: Optional[str] = None
-    leave_date: Optional[str] = None
+    presented_date: Optional[int] = Field(None, ge=1000, le=9999)
+    leave_date: Optional[int] = Field(None, ge=1000, le=9999)
