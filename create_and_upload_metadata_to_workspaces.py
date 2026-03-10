@@ -65,6 +65,10 @@ def get_args() -> Namespace:
                         help="Set this flag to true to continue uploading metadata if workspace already exists")
     parser.add_argument("--dry_run", "-d", action="store_true",
                         help="Log what would happen without creating workspaces, uploading TSVs, or modifying ACLs")
+    parser.add_argument("--workspace_scope", "-w", choices=["all", "main", "sub"], default="all",
+                        help="Which workspaces to create and upload: 'all' (default), 'main' only, or 'sub' only")
+    parser.add_argument("--dataset_notes", "-n", default=None,
+                        help="Optional path to a file whose contents will be set as the description on every workspace created")
     return parser.parse_args()
 
 def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
@@ -315,8 +319,16 @@ def main():
     args = get_args()
     continue_if_workspace_exists = args.continue_if_workspace_exists
     dry_run = args.dry_run
+    workspace_scope = args.workspace_scope
     if dry_run:
         logging.info("DRY RUN mode enabled — no workspaces will be created, no data will be uploaded")
+    logging.info(f"Workspace scope: '{workspace_scope}'")
+
+    dataset_notes = args.dataset_notes
+    if dataset_notes:
+        with open(dataset_notes, "r", encoding="utf-8") as f:
+            dataset_notes = f.read()
+        logging.info(f"Loaded dataset notes ({len(dataset_notes)} characters)")
 
     # Single shared GCP client used throughout
     gcp = GCPCloudFunctions()
@@ -356,32 +368,41 @@ def main():
     )
 
     # Create the main workspace
-    main_workspace_terra_obj = workspace_manager.create_main_workspace(continue_if_exists=continue_if_workspace_exists)
+    main_workspace_terra_obj = None
+    if workspace_scope in ("all", "main"):
+        main_workspace_terra_obj = workspace_manager.create_main_workspace(continue_if_exists=continue_if_workspace_exists)
+        if dataset_notes:
+            workspace_manager.set_workspace_description(main_workspace_terra_obj, dataset_notes)
 
     # Create sub workspaces
-    sub_workspaces: dict[str, TerraWorkspace] = workspace_manager.create_all_sub_workspaces(
-        dataset_info=dataset_info, continue_if_exists=continue_if_workspace_exists
-    )
+    sub_workspaces: dict[str, TerraWorkspace] = {}
+    if workspace_scope in ("all", "sub"):
+        sub_workspaces = workspace_manager.create_all_sub_workspaces(
+            dataset_info=dataset_info, continue_if_exists=continue_if_workspace_exists
+        )
+        if dataset_notes:
+            for sub_workspace_terra_obj in sub_workspaces.values():
+                workspace_manager.set_workspace_description(sub_workspace_terra_obj, dataset_notes)
 
     sub_workspace_metadata = []
-    for sub_dataset in dataset_info.sub_datasets:
+    if workspace_scope in ("all", "sub"):
+        for sub_dataset in dataset_info.sub_datasets:
+            sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
+            logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
+            sub_participants = csv_transformer.extract_all_participant_ids_from_files(
+                file_contents_map=sub_dataset.file_contents_map
+            )
+            sub_workspace_metadata.append(
+                {
+                    "workspace_name": sub_dataset.workspace_name,
+                    "participants": sub_participants,
+                    "sub_workspace_terra_obj": sub_workspace_terra_obj,
+                }
+            )
+            logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants")
 
-        sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-        logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
-        sub_participants = csv_transformer.extract_all_participant_ids_from_files(
-            file_contents_map=sub_dataset.file_contents_map
-        )
-
-        sub_workspace_metadata.append(
-            {
-                "workspace_name": sub_dataset.workspace_name,
-                "participants": sub_participants,
-                "sub_workspace_terra_obj": sub_workspace_terra_obj,
-            }
-        )
-        logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants")
-
-    # Check genomics file existence once using all participants from the main dataset
+    # Always extract participants from main dataset — needed for genomics checks
+    # even in sub-only mode (sequencing files are checked against all main participants).
     all_main_participants = csv_transformer.extract_all_participant_ids_from_files(
         file_contents_map=dataset_info.main_file_contents_map
     )
@@ -399,12 +420,11 @@ def main():
     for participant_id in all_main_participants:
         if participant_id not in all_participant_files:
             failure = (
-                f"{sub_dataset.workspace_name}: Participant '{participant_id}' not found in onyx mapping "
+                f"Participant '{participant_id}' not found in onyx mapping "
                 f"({PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH})"
             )
             mapping_failures.append(failure)
             logging.warning(failure)
-
 
     # Add researchers with clearance for genomics file access to the genomics access group
     logging.info(f"Adding researchers with genomics access to {GENOMICS_FILE_ACCESS_GROUP_NAME} group...")
@@ -414,37 +434,43 @@ def main():
 
     researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING, gcp=gcp)
 
-    # Process main workspace — all checked participants go into the master sequencing TSV
-    process_main_workspace(
-        dataset_info=dataset_info,
-        terra_workspace_obj=main_workspace_terra_obj,
-        csv_transformer=csv_transformer,
-        terra_uploader=terra_uploader,
-        temp_dir=temp_dir,
-        participant_files=all_participant_files,
-        dry_run=dry_run,
-    )
+    # Process main workspace
+    if workspace_scope in ("all", "main"):
+        process_main_workspace(
+            dataset_info=dataset_info,
+            terra_workspace_obj=main_workspace_terra_obj,
+            csv_transformer=csv_transformer,
+            terra_uploader=terra_uploader,
+            temp_dir=temp_dir,
+            participant_files=all_participant_files,
+            dry_run=dry_run,
+        )
 
     # Process sub workspaces
-    sub_mapping_failures = process_sub_workspaces(
-        dataset_info=dataset_info,
-        sub_workspace_metadata=sub_workspace_metadata,
-        csv_transformer=csv_transformer,
-        terra_uploader=terra_uploader,
-        temp_dir=temp_dir,
-        all_participant_files=all_participant_files,
-        workspace_manager_obj=workspace_manager,
-        genomics_access_metadata=genomics_access_contents,
-        researcher_id_mapping=researcher_id_mapping,
-        gcp=gcp,
-        dry_run=dry_run,
-    )
-    mapping_failures.extend(sub_mapping_failures)
+    if workspace_scope in ("all", "sub"):
+        sub_mapping_failures = process_sub_workspaces(
+            dataset_info=dataset_info,
+            sub_workspace_metadata=sub_workspace_metadata,
+            csv_transformer=csv_transformer,
+            terra_uploader=terra_uploader,
+            temp_dir=temp_dir,
+            all_participant_files=all_participant_files,
+            workspace_manager_obj=workspace_manager,
+            genomics_access_metadata=genomics_access_contents,
+            researcher_id_mapping=researcher_id_mapping,
+            gcp=gcp,
+            dry_run=dry_run,
+        )
+        mapping_failures.extend(sub_mapping_failures)
 
     # Clean up temp directory
     shutil.rmtree(temp_dir)
 
-    logging.info(f"Successfully processed 1 main workspaces and {len(sub_workspace_metadata)} sub-workspace(s)")
+    logging.info(
+        f"Successfully processed "
+        f"{'1 main workspace' if workspace_scope in ('all', 'main') else '0 main workspaces'} and "
+        f"{len(sub_workspace_metadata) if workspace_scope in ('all', 'sub') else 0} sub-workspace(s)"
+    )
 
     if mapping_failures:
         for failure in mapping_failures:
