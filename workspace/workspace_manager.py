@@ -57,6 +57,26 @@ class WorkspaceManager:
 
         return f"{clean_project_name}_{year}_{month}"
 
+    def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
+        """
+        Set the description attribute on a Terra workspace.
+
+        Args:
+            workspace: TerraWorkspace object to update
+            description: String to set as the workspace description
+        """
+        if self.dry_run:
+            logging.info(f"DRY RUN: Would set description on workspace '{workspace.workspace_name}'")
+            return
+        workspace.update_workspace_attributes([
+            {
+                "op": "AddUpdateAttribute",
+                "attributeName": "description",
+                "addUpdateAttribute": description,
+            }
+        ])
+        logging.info(f"Set description on workspace '{workspace.workspace_name}'")
+
     def create_workspace(self, workspace_name: str, continue_if_exists: bool = False) -> TerraWorkspace:
         """
         Create a single Terra workspace.
