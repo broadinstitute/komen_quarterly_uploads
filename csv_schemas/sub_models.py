@@ -3,8 +3,8 @@ Pydantic models for sub_dataset CSV files.
 These models are designed to validate data converted from CSV to list of dictionaries.
 """
 
-from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, model_validator
+from typing import Optional, Any, Annotated
+from pydantic import BaseModel, ConfigDict, model_validator, BeforeValidator
 
 
 class CsvModel(BaseModel):
@@ -17,17 +17,67 @@ class CsvModel(BaseModel):
     - Extra columns in the CSV (not defined in the model) also fail validation.
       Headers must match the model exactly.
     """
+    # Doesn't allow for any extra headers in the CSV that aren't defined as fields on the model
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="before")
     @classmethod
     def require_all_columns_present(cls, data: Any) -> Any:
+        """Checks that all columns defined in the model are present within the CSV"""
         if not isinstance(data, dict):
             return data
+
+        # Check for missing columns
         missing = [field for field in cls.model_fields if field not in data]
         if missing:
             raise ValueError(f"Missing columns (present in model but not in CSV): {missing}")
         return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def  convert_yes_no_to_bool(cls, data: Any) -> Any:
+        """Converts "Yes"/"No" string values to boolean True/False for any fields that are Optional[bool]."""
+        for field_name, field_info in cls.model_fields.items():
+            # Check if the field is typed as bool (or Optional[bool])
+            if field_info.annotation is bool or field_info.annotation == Optional[bool]:
+                value = data.get(field_name)
+                if isinstance(value, str):
+                    clean_val = value.strip().lower()
+                    if clean_val == "yes":
+                        data[field_name] = True
+                    elif clean_val == "no":
+                        data[field_name] = False
+                    elif clean_val == "":
+                        data[field_name] = None
+        return data
+
+
+def parse_optional_year(v: Any) -> Optional[int]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        if v == "": # Handle empty cells
+            return None
+        if v.isdigit(): # Convert "2021" to 2021
+            year = int(v)
+            # Validate 4-digit range
+            if 1000 <= year <= 9999:
+                return year
+            else:
+                raise ValueError(f"Year must be a 4-digit integer (1000-9999), got {year}")
+        else:
+            raise ValueError(f"Year must be a numeric string or empty, got '{v}'")
+    if isinstance(v, int):
+        if 1000 <= v <= 9999:
+            return v
+        else:
+            raise ValueError(f"Year must be a 4-digit integer (1000-9999), got {v}")
+    raise ValueError(f"Year must be an integer or string, got type {type(v).__name__}")
+
+# Custom type for optional year fields that applies the parse_optional_year validator before validation
+# Requires fields defined as this type to be an integer with 4 digits (i.e., a year)
+OptionalYearInt = Annotated[Optional[int], BeforeValidator(parse_optional_year)]
 
 
 class ResearcherProjectMetadata(CsvModel):
@@ -54,10 +104,10 @@ class Demographics(CsvModel):
     education_level: Optional[str] = None
     marital_status: Optional[str] = None
     pregnancy_cancer: Optional[str] = None
-    menopause_yn: Optional[str] = None
-    menopause: Optional[str] = None
+    menopause_yn: Optional[bool]
+    menopause: OptionalYearInt = None
     vital_status: Optional[str] = None
-    death_date: Optional[str] = None
+    death_date: OptionalYearInt = None
     death_source: Optional[str] = None
     primary_residential_type: Optional[str] = None
     nic_status: Optional[str] = None
@@ -70,7 +120,7 @@ class Biomarker(CsvModel):
     """Model for biomarker.csv"""
     patient_id: str
     biomarker_id: str
-    biomarker_yn: Optional[str] = None
+    biomarker_yn: Optional[bool]
     biomarker_test: Optional[str] = None
     biomarker_provenance: Optional[str] = None
     biomarker_lab: Optional[str] = None
@@ -84,7 +134,7 @@ class BiomarkerTestDetail(CsvModel):
     biomarker_id: str
     biomarker_detail_id: str
     biomarker_name: Optional[str] = None
-    biomarker_result_date: Optional[str] = None
+    biomarker_result_date: OptionalYearInt = None
     biomarker_result_status: Optional[str] = None
     biomarker_result_status_other: Optional[str] = None
     biomarker_result_units: Optional[str] = None
@@ -97,7 +147,7 @@ class BiomarkersGenes(CsvModel):
     biomarker_id: str
     biomarker_gene_id: str
     biomarker_gene: Optional[str] = None
-    biomarker_gene_date: Optional[str] = None
+    biomarker_gene_date: OptionalYearInt = None
     biomarker_gene_finding: Optional[str] = None
     biomarker_gene_variant_type: Optional[str] = None
 
@@ -106,7 +156,7 @@ class DiseaseCharacteristic(CsvModel):
     """Model for disease_characteristic.csv"""
     patient_id: str
     disease_id: str
-    histology_yn: Optional[str] = None
+    histology_yn: Optional[bool]
     histology_initial_dx: Optional[str] = None
     stage_provenance_dx: Optional[str] = None
     t_stage_initial_dx: Optional[str] = None
@@ -115,8 +165,8 @@ class DiseaseCharacteristic(CsvModel):
     m_number_initial_dx: Optional[str] = None
     grade_initial_dx: Optional[str] = None
     group_stage_initial_dx: Optional[str] = None
-    group_stage_dx_date: Optional[str] = None
-    progression_yn: Optional[str] = None
+    group_stage_dx_date: OptionalYearInt = None
+    progression_yn: Optional[bool]
 
 
 class DiseaseCharacteristicsPrimarySite(CsvModel):
@@ -142,7 +192,7 @@ class DiseaseCharacteristicsProgression(CsvModel):
     m_number_progression_dx: Optional[str] = None
     grade_progression_dx: Optional[str] = None
     group_stage_progression: Optional[str] = None
-    group_stage_progression_date: Optional[str] = None
+    group_stage_progression_date: OptionalYearInt = None
 
 
 class DiseaseCharacteristicsProgressionSite(CsvModel):
@@ -150,7 +200,7 @@ class DiseaseCharacteristicsProgressionSite(CsvModel):
     patient_id: str
     progression_id: str
     progression_site_id: str
-    progression_site_yn: Optional[str] = None
+    progression_site_yn: Optional[bool]
     anatomic_site_progression: Optional[str] = None
     tumor_size_progression: Optional[str] = None
     tumor_size_progression_unit: Optional[str] = None
@@ -168,10 +218,10 @@ class FamilyHistoryBiologicalFather(CsvModel):
     father_ethnicity: Optional[str] = None
     father_age: Optional[str] = None
     father_death_age: Optional[str] = None
-    father_diagnosed_cancer: Optional[str] = None
+    father_diagnosed_cancer: Optional[bool]
     father_first_cancer_type: Optional[str] = None
     father_age_first_cancer_diagnosis: Optional[str] = None
-    father_diagnosed_second_cancer: Optional[str] = None
+    father_diagnosed_second_cancer: Optional[bool]
     father_second_cancer_type: Optional[str] = None
     father_age_second_cancer_diagnosis: Optional[str] = None
 
@@ -182,15 +232,15 @@ class FamilyHistoryBiologicalMother(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    was_mother_adopted: Optional[str] = None
-    was_mother_twin_triplet: Optional[str] = None
+    was_mother_adopted: Optional[bool]
+    was_mother_twin_triplet: Optional[bool]
     mother_ethnicity: Optional[str] = None
     mother_age: Optional[str] = None
     mother_death_age: Optional[str] = None
-    mother_diagnosed_cancer: Optional[str] = None
+    mother_diagnosed_cancer: Optional[bool]
     mother_first_cancer_type: Optional[str] = None
     mother_age_first_cancer_diagnosis: Optional[str] = None
-    mother_diagnosed_second_cancer: Optional[str] = None
+    mother_diagnosed_second_cancer: Optional[bool]
     mother_second_cancer_type: Optional[str] = None
     mother_age_second_cancer_diagnosis: Optional[str] = None
 
@@ -202,7 +252,7 @@ class FamilyHistoryBiologicalSiblings(CsvModel):
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
     sibling_birth_gender: Optional[str] = None
-    was_sibling_twin_triplet: Optional[str] = None
+    was_sibling_twin_triplet: Optional[bool]
     sibling_age: Optional[str] = None
     sibling_death_age: Optional[str] = None
     sibling_first_cancer_type: Optional[str] = None
@@ -218,7 +268,7 @@ class FamilyHistoryBiologicalSiblingsIntro(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    is_patient_twin_triplet: Optional[str] = None
+    is_patient_twin_triplet: Optional[bool]
     number_of_siblings: Optional[str] = None
     number_of_siblings_with_cancer: Optional[str] = None
 
@@ -227,7 +277,7 @@ class FamilyHistoryCancer(CsvModel):
     """Model for family_history_cancer.csv"""
     patient_id: str
     family_history_id: str
-    cancer_history_yn: Optional[str] = None
+    cancer_history_yn: Optional[bool]
     cancer_type: Optional[str] = None
     relative: Optional[str] = None
     relative_other: Optional[str] = None
@@ -242,7 +292,7 @@ class FamilyHistoryOtherFamilyMembers(CsvModel):
     maternal_grandmother_diagnosed_cancer: Optional[str] = None
     maternal_grandmother_cancer_diagnosis: Optional[str] = None
     maternal_grandmother_age_first_diagnosis: Optional[str] = None
-    paternal_grandmother_diagnosed_cancer: Optional[str] = None
+    paternal_grandmother_diagnosed_cancer: Optional[bool]
     paternal_grandmother_cancer_diagnosis: Optional[str] = None
     paternal_grandmother_age_first_diagnosis: Optional[str] = None
     mother_number_biological_sisters: Optional[str] = None
@@ -279,7 +329,7 @@ class FamilyHistoryYou(CsvModel):
     has_genetic_test: Optional[str] = None
     genetic_test_indicates_mutation: Optional[str] = None
     family_has_ashkenazi_ancestry: Optional[str] = None
-    is_adopted: Optional[str] = None
+    is_adopted: Optional[bool]
     family_members_with_history_answers: Optional[str] = None
 
 
@@ -287,9 +337,9 @@ class Imaging(CsvModel):
     """Model for imaging.csv"""
     patient_id: str
     imaging_id: str
-    imaging_yn: Optional[str] = None
-    imaging_perform_date: Optional[str] = None
-    imaging_interpret_date: Optional[str] = None
+    imaging_yn: Optional[bool]
+    imaging_perform_date: OptionalYearInt = None
+    imaging_interpret_date: OptionalYearInt = None
     imaging_finding: Optional[str] = None
     imaging_finding_detail: Optional[str] = None
     imaging_score: Optional[str] = None
@@ -305,12 +355,12 @@ class Lab(CsvModel):
     """Model for lab.csv"""
     patient_id: str
     lab_id: str
-    labs_yn: Optional[str] = None
+    labs_yn: Optional[bool]
     lab_test_name: Optional[str] = None
     lab_result: Optional[str] = None
     lab_result_unit: Optional[str] = None
-    lab_collect_date: Optional[str] = None
-    lab_result_date: Optional[str] = None
+    lab_collect_date: OptionalYearInt = None
+    lab_result_date: OptionalYearInt = None
     lab_specimen_type: Optional[str] = None
 
 
@@ -318,11 +368,11 @@ class MedList(CsvModel):
     """Model for med_list.csv"""
     patient_id: str
     med_id: str
-    med_yn: Optional[str] = None
+    med_yn: Optional[bool]
     med_name: Optional[str] = None
-    med_start_date: Optional[str] = None
-    med_end_yn: Optional[str] = None
-    med_end_date: Optional[str] = None
+    med_start_date: OptionalYearInt = None
+    med_end_yn: Optional[bool]
+    med_end_date: OptionalYearInt = None
 
 
 class PatientEnrollmentStatus(CsvModel):
@@ -363,7 +413,7 @@ class PatientProfileEligibility(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    date_of_birth: Optional[str] = None
+    date_of_birth: OptionalYearInt = None
     year_of_first_breast_cancer_diagnosis: Optional[str] = None
 
 
@@ -390,8 +440,8 @@ class PatientProfileProviderInfo(CsvModel):
     patient_task_id: Optional[str] = None
     breast_cancer_care_state: Optional[str] = None
     breast_cancer_care_currently_on_treatment: Optional[str] = None
-    breast_cancer_care_start_date: Optional[str] = None
-    breast_cancer_care_end_date: Optional[str] = None
+    breast_cancer_care_start_date: OptionalYearInt = None
+    breast_cancer_care_end_date: OptionalYearInt = None
     has_genetic_test: Optional[str] = None
     genetic_test: Optional[str] = None
 
@@ -411,21 +461,21 @@ class Payor(CsvModel):
     """Model for payor.csv"""
     patient_id: str
     payor_id: str
-    payor_yn: Optional[str] = None
+    payor_yn: Optional[bool]
     payor: Optional[str] = None
     insurance_type: Optional[str] = None
-    payor_effective_date: Optional[str] = None
+    payor_effective_date: OptionalYearInt = None
     payor_date: Optional[str] = None
     insurance_status: Optional[str] = None
-    disenroll_date: Optional[str] = None
+    disenroll_date: OptionalYearInt = None
 
 
 class PerformanceScore(CsvModel):
     """Model for performance_score.csv"""
     patient_id: str
     ps_id: str
-    ps_yn: Optional[str] = None
-    ps_date: Optional[str] = None
+    ps_yn: Optional[bool]
+    ps_date: OptionalYearInt = None
     ps_type: Optional[str] = None
     ecog_score: Optional[str] = None
     karnofsky_score: Optional[str] = None
@@ -435,36 +485,36 @@ class Pro(CsvModel):
     """Model for pro.csv"""
     patient_id: str
     pro_id: str
-    pro_yn: Optional[str] = None
+    pro_yn: Optional[bool]
     pro_name: Optional[str] = None
     pro_topic: Optional[str] = None
     pro_result_quantitative: Optional[str] = None
     pro_result_qualitative: Optional[str] = None
-    pro_date: Optional[str] = None
+    pro_date: OptionalYearInt = None
 
 
 class ProblemList(CsvModel):
     """Model for problem_list.csv"""
     patient_id: str
     problem_list_id: str
-    problem_list_yn: Optional[str] = None
+    problem_list_yn: Optional[bool]
     diagnosis: Optional[str] = None
-    diagnosis_date: Optional[str] = None
-    diagnosis_documented_date: Optional[str] = None
+    diagnosis_date: OptionalYearInt = None
+    diagnosis_documented_date: OptionalYearInt = None
 
 
 class Procedures(CsvModel):
     """Model for procedures.csv"""
     patient_id: str
     procedure_id: str
-    procedure_yn: Optional[str] = None
+    procedure_yn: Optional[bool]
     procedure_provenance: Optional[str] = None
     procedure_name: Optional[str] = None
     procedure_location: Optional[str] = None
     tumor_dimension: Optional[str] = None
     tumor_dimension_unit: Optional[str] = None
-    procedure_start_date: Optional[str] = None
-    procedure_stop_date: Optional[str] = None
+    procedure_start_date: OptionalYearInt = None
+    procedure_stop_date: OptionalYearInt = None
 
 
 class QualityOfLifeGeneral(CsvModel):
@@ -602,7 +652,7 @@ class RadiationTherapy(CsvModel):
     """Model for radiation_therapy.csv"""
     patient_id: str
     radiation_therapy_id: str
-    radiation_therapy_yn: Optional[str] = None
+    radiation_therapy_yn: Optional[bool]
     radiation_clinical_trial_yn: Optional[str] = None
     radiation_energy: Optional[str] = None
     radiation_technique: Optional[str] = None
@@ -613,22 +663,22 @@ class RadiationTherapy(CsvModel):
     radiation_total_fractions_received: Optional[str] = None
     radiation_discontinuation: Optional[str] = None
     radiation_dc_reason: Optional[str] = None
-    radiation_start_date: Optional[str] = None
-    radiation_end_date: Optional[str] = None
+    radiation_start_date: OptionalYearInt = None
+    radiation_end_date: OptionalYearInt = None
 
 
 class Regimen(CsvModel):
     """Model for regimen.csv"""
     patient_id: str
     regimen_id: str
-    regimen_yn: Optional[str] = None
+    regimen_yn: Optional[bool]
     regimen_clinical_trial_yn: Optional[str] = None
     regimen_name: Optional[str] = None
     regimen_drugs: Optional[str] = None
     regimen_route_of_administration: Optional[str] = None
     regimen_intent: Optional[str] = None
-    regimen_start_date: Optional[str] = None
-    regimen_end_date: Optional[str] = None
+    regimen_start_date: OptionalYearInt = None
+    regimen_end_date: OptionalYearInt = None
     regimen_discontinuation: Optional[str] = None
     regimen_dc_reason: Optional[str] = None
 
@@ -748,21 +798,21 @@ class Symptom(CsvModel):
     patient_id: str
     visit_symptoms_id: str
     visit_id: str
-    symptom_yn: Optional[str] = None
+    symptom_yn: Optional[bool]
     symptom: Optional[str] = None
-    symptom_start_date: Optional[str] = None
-    symptom_end_date: Optional[str] = None
+    symptom_start_date: OptionalYearInt = None
+    symptom_end_date: OptionalYearInt = None
 
 
 class Trial(CsvModel):
     """Model for trial.csv"""
     patient_id: str
     trial_id: str
-    clinical_trial_yn: Optional[str] = None
+    clinical_trial_yn: Optional[bool]
     trial_code: Optional[str] = None
     trial_phase: Optional[str] = None
-    trial_enroll_date: Optional[str] = None
-    trial_complete_date: Optional[str] = None
+    trial_enroll_date: OptionalYearInt = None
+    trial_complete_date: OptionalYearInt = None
     clinical_trial_outcome: Optional[str] = None
 
 
@@ -770,8 +820,8 @@ class TumorResponse(CsvModel):
     """Model for tumor_response.csv"""
     patient_id: str
     tumor_response_id: str
-    tumor_response_yn: Optional[str] = None
-    response_date: Optional[str] = None
+    tumor_response_yn: Optional[bool]
+    response_date: OptionalYearInt = None
     response_result: Optional[str] = None
     response_source_biopsy: Optional[str] = None
     response_source_imaging: Optional[str] = None
@@ -782,8 +832,8 @@ class Visit(CsvModel):
     """Model for visit.csv"""
     patient_id: str
     visit_id: str
-    visit_yn: Optional[str] = None
+    visit_yn: Optional[bool]
     visit_type: Optional[str] = None
     speciality_dept: Optional[str] = None
-    presented_date: Optional[str] = None
-    leave_date: Optional[str] = None
+    presented_date: OptionalYearInt = None
+    leave_date: OptionalYearInt = None
