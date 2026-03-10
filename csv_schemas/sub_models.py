@@ -23,6 +23,7 @@ class CsvModel(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def require_all_columns_present(cls, data: Any) -> Any:
+        """Checks that all columns defined in the model are present within the CSV"""
         if not isinstance(data, dict):
             return data
 
@@ -35,7 +36,7 @@ class CsvModel(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def  convert_yes_no_to_bool(cls, data: Any) -> Any:
-        # Convert "Yes"/"No" to boolean True/False for any fields that are Optional[bool]
+        """Converts "Yes"/"No" string values to boolean True/False for any fields that are Optional[bool]."""
         for field_name, field_info in cls.model_fields.items():
             # Check if the field is typed as bool (or Optional[bool])
             if field_info.annotation is bool or field_info.annotation == Optional[bool]:
@@ -50,7 +51,7 @@ class CsvModel(BaseModel):
                         data[field_name] = None
         return data
 
-# Validator for optional year fields
+
 def parse_optional_year(v: Any) -> Optional[int]:
     if v is None:
         return None
@@ -74,8 +75,10 @@ def parse_optional_year(v: Any) -> Optional[int]:
             raise ValueError(f"Year must be a 4-digit integer (1000-9999), got {v}")
     raise ValueError(f"Year must be an integer or string, got type {type(v).__name__}")
 
-# 3. Create reusable Year types
+# Custom type for optional year fields that applies the parse_optional_year validator before validation
+# Requires fields defined as this type to be an integer with 4 digits (i.e., a year)
 OptionalYearInt = Annotated[Optional[int], BeforeValidator(parse_optional_year)]
+
 
 class ResearcherProjectMetadata(CsvModel):
     """Model for researcher_id_62_project_id_115_metadata.csv"""
@@ -210,8 +213,8 @@ class FamilyHistoryBiologicalFather(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    was_father_adopted: Optional[bool]
-    was_father_twin_triplet: Optional[bool]
+    was_father_adopted: Optional[str] = None
+    was_father_twin_triplet: Optional[str] = None
     father_ethnicity: Optional[str] = None
     father_age: Optional[str] = None
     father_death_age: Optional[str] = None
@@ -286,7 +289,7 @@ class FamilyHistoryOtherFamilyMembers(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    maternal_grandmother_diagnosed_cancer: Optional[bool]
+    maternal_grandmother_diagnosed_cancer: Optional[str] = None
     maternal_grandmother_cancer_diagnosis: Optional[str] = None
     maternal_grandmother_age_first_diagnosis: Optional[str] = None
     paternal_grandmother_diagnosed_cancer: Optional[bool]
@@ -309,7 +312,7 @@ class FamilyHistoryOtherFamilyMembersRelatives(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    cancer_diagnosis: Optional[bool]
+    cancer_diagnosis: Optional[str] = None
     age_first_diagnosis: Optional[str] = None
     relative: Optional[str] = None
     relative_type: Optional[str] = None
@@ -322,10 +325,10 @@ class FamilyHistoryYou(CsvModel):
     task_id: Optional[str] = None
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
-    received_genetic_counseling: Optional[bool]
-    has_genetic_test: Optional[bool]
-    genetic_test_indicates_mutation: Optional[bool]
-    family_has_ashkenazi_ancestry: Optional[bool]
+    received_genetic_counseling: Optional[str] = None
+    has_genetic_test: Optional[str] = None
+    genetic_test_indicates_mutation: Optional[str] = None
+    family_has_ashkenazi_ancestry: Optional[str] = None
     is_adopted: Optional[bool]
     family_members_with_history_answers: Optional[str] = None
 
@@ -669,7 +672,7 @@ class Regimen(CsvModel):
     patient_id: str
     regimen_id: str
     regimen_yn: Optional[bool]
-    regimen_clinical_trial_yn: Optional[bool]
+    regimen_clinical_trial_yn: Optional[str] = None
     regimen_name: Optional[str] = None
     regimen_drugs: Optional[str] = None
     regimen_route_of_administration: Optional[str] = None

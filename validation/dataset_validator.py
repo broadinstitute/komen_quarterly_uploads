@@ -107,7 +107,6 @@ class DatasetValidator:
                 try:
                     model(**row)
                 except ValidationError as e:
-                    print(f'ERROR IN ROW: {row}')
                     for error in e.errors():
                         field = " -> ".join(str(loc) for loc in error["loc"])
                         errors_for_file.append(f"  Row {row_num}, field '{field}': {error['msg']}")

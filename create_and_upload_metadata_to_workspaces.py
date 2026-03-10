@@ -340,7 +340,6 @@ def main():
     if not validator.validate_all(dataset_info):
         logging.error("Dataset validation failed. Exiting.")
         exit(1)
-    exit()
 
     # Load participant to sample ID mapping
     participant_to_sample = load_participant_to_sample_mapping(gcp)
