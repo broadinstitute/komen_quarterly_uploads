@@ -21,6 +21,7 @@ from ops_utils.terra_util import TerraWorkspace, TerraGroups, MEMBER, ADMIN
 from ops_utils.token_util import Token
 from ops_utils.gcp_utils import GCPCloudFunctions
 
+from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
@@ -207,8 +208,10 @@ def process_sub_workspaces(
 
         tsv_files = []
         for csv_file_path in sub_dataset.files:
-            file_contents = sub_dataset.file_contents_map[csv_file_path]
-            tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
+            # We want to skip uploading the patient_enrollment_status.csv file
+            if Path(csv_file_path).name not in MAIN_ONLY_CSVS:
+                file_contents = sub_dataset.file_contents_map[csv_file_path]
+                tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
 
         if has_genomics_access:
             logging.info("Researcher has genomics access - creating sequencing files TSV for sub workspace")
@@ -221,7 +224,7 @@ def process_sub_workspaces(
             tsv_files.append(str(sequencing_tsv_path))
         else:
             logging.info("Researcher does not have genomics access - skipping sequencing files TSV for sub workspace")
-
+        print(f'ALL TSVS: {tsv_files}')
         if dry_run:
             logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to sub workspace '{sub_dataset.workspace_name}'")
         else:

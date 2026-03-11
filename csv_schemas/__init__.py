@@ -84,7 +84,7 @@ CSV_SCHEMA_MAP: dict[str, type[BaseModel]] = {
 }
 
 # Common CSV files present in both main_dataset and sub_dataset
-common_csvs = [
+COMMON_CSVS = [
     "biomarker_test_detail.csv",
     "biomarker.csv",
     "biomarkers_genes.csv",
@@ -104,7 +104,6 @@ common_csvs = [
     "imaging.csv",
     "lab.csv",
     "med_list.csv",
-    "patient_enrollment_status.csv",
     "patient_profile_cancer_info.csv",
     "patient_profile_contact_info.csv",
     "patient_profile_eligibility.csv",
@@ -135,18 +134,19 @@ common_csvs = [
 ]
 
 # CSV files unique to main_dataset only
-main_only_csvs = [
+MAIN_ONLY_CSVS = [
     "patient_id_map.csv",
+    "patient_enrollment_status.csv",
 ]
 
 # CSV files unique to sub_dataset only
 sub_only_csvs = []
 
 # Expected CSV files in main_dataset
-MAIN_CSVS = common_csvs + main_only_csvs
+MAIN_CSVS = COMMON_CSVS + MAIN_ONLY_CSVS
 
 # Expected CSV files in sub_dataset
-SUB_CSVS = common_csvs + sub_only_csvs
+SUB_CSVS = COMMON_CSVS + sub_only_csvs
 
 
 def get_sub_list_with_research_metadata_file(researcher_id: int, project_id: int) -> list[str]:

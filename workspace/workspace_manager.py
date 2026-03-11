@@ -77,7 +77,8 @@ class WorkspaceManager:
         ])
         logging.info(f"Set description on workspace '{workspace.workspace_name}'")
 
-    def workspace_has_all_tables(self, workspace: TerraWorkspace, expected_tables: list[str]) -> bool:
+    @staticmethod
+    def workspace_has_all_tables(workspace: TerraWorkspace, expected_tables: list[str]) -> bool:
         """
         Check whether all expected tables already exist in the workspace.
 
