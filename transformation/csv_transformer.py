@@ -153,7 +153,7 @@ class CSVTransformer:
             Path to created TSV file.
         """
         header_list = [
-            "entity:sequencing_files_id",
+            "entity:sequencing_files_table_id",
             "participant_id",
             "cram",
             "crai",
@@ -170,7 +170,7 @@ class CSVTransformer:
 
         sequencing_data = []
         for idx, (participant_id, files) in enumerate(sorted(participant_files.items()), start=1):
-            row_data = {"entity:sequencing_files_id": str(idx), "participant_id": participant_id}
+            row_data = {"entity:sequencing_files_table_id": str(idx), "participant_id": participant_id}
             for file_type in header_list[2:]:  # skip the two id columns
                 # Use the file path if it exists, otherwise "NA"
                 row_data[file_type] = files.get(file_type) or "NA"
