@@ -97,9 +97,6 @@ class WorkspaceManager:
             if t not in workspace_tables
         ]
         if missing:
-            logging.info(
-                f"Workspace '{workspace.workspace_name}' is missing {len(missing)} table(s): {missing}"
-            )
             return False
         logging.info(f"Workspace '{workspace.workspace_name}' already has all expected tables")
         return True
