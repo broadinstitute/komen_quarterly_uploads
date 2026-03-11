@@ -31,7 +31,7 @@ class WorkspaceManager:
         self.dry_run = dry_run
 
     @staticmethod
-    def format_workspace_name(project_name: str, date_created: str) -> str:
+    def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
         """
         Format workspace name as {project_name}_{year}_{month}.
 
@@ -55,7 +55,7 @@ class WorkspaceManager:
         # Clean up project name (remove spaces, special chars)
         clean_project_name = re.sub(r'[^\w-]', '_', project_name)
 
-        return f"{clean_project_name}_{year}_{month}"
+        return f"{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
     def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
         """
@@ -155,8 +155,9 @@ class WorkspaceManager:
             TerraWorkspace object for sub workspace
         """
         workspace_name = self.format_workspace_name(
-            sub_dataset_info.project_name,
-            sub_dataset_info.date_created
+            project_name=sub_dataset_info.project_name,
+            date_created=sub_dataset_info.date_created,
+            researcher_id=sub_dataset_info.researcher_id,
         )
         # Set the workspace name in the data model for later use
         sub_dataset_info.workspace_name = workspace_name
