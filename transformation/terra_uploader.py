@@ -8,8 +8,8 @@ from ops_utils.terra_util import TerraWorkspace
 
 from transformation.column_order import TABLE_COLUMN_ORDER
 
-# Matches the dynamic metadata table name, e.g. "researcher_id_62_project_id_115_metadata"
-_METADATA_TABLE_PATTERN = re.compile(r"^researcher_id_\d+_project_id_\d+_metadata$")
+# Matches the dynamic metadata table name, e.g. "researcher_id_62_project_id_115_metadata_table"
+_METADATA_TABLE_PATTERN = re.compile(r"^researcher_id_\d+_project_id_\d+_metadata_table$")
 
 
 class TerraUploader:
@@ -54,13 +54,13 @@ class TerraUploader:
         """
         column_order_dict = {}
         for tsv_path in tsv_files:
-            table_name = Path(tsv_path).stem  # e.g. "biomarker" from "biomarker.tsv"
-            if table_name in TABLE_COLUMN_ORDER:
-                # table name will be same as file + "_table" suffix, e.g. "biomarker_table"
-                column_order_dict[f'{table_name}_table'] = TABLE_COLUMN_ORDER[table_name]
+            stem = Path(tsv_path).stem  # e.g. "biomarker" from "biomarker.tsv"
+            table_name = f"{stem}_table"  # actual Terra table name, e.g. "biomarker_table"
+            if stem in TABLE_COLUMN_ORDER:
+                column_order_dict[table_name] = TABLE_COLUMN_ORDER[stem]
             elif _METADATA_TABLE_PATTERN.match(table_name):
-                # Dynamic name like researcher_id_62_project_id_115_metadata — reuse the shared definition
-                column_order_dict[f'{table_name}_table'] = TABLE_COLUMN_ORDER["researcher_project_metadata"]
+                # Dynamic name like researcher_id_62_project_id_115_metadata_table — reuse the shared definition
+                column_order_dict[table_name] = TABLE_COLUMN_ORDER["researcher_project_metadata"]
             else:
                 logging.warning(
                     f"No column order defined for table '{table_name}' — skipping column order for this table"
