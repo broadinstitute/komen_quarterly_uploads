@@ -123,7 +123,6 @@ def process_main_workspace(
         workspace_manager.set_workspace_description(terra_workspace_obj, dataset_notes)
 
     tsv_files = []
-
     for csv_file_path in dataset_info.main_dataset_files:
         file_contents = dataset_info.main_file_contents_map[csv_file_path]
         tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
@@ -135,7 +134,6 @@ def process_main_workspace(
     )
     tsv_files.append(str(sequencing_tsv_path))
     logging.info(f"Created master sequencing files TSV with {len(participant_files)} participants")
-
     if dry_run:
         logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to main workspace '{terra_workspace_obj.workspace_name}'")
     else:
@@ -224,7 +222,6 @@ def process_sub_workspaces(
             tsv_files.append(str(sequencing_tsv_path))
         else:
             logging.info("Researcher does not have genomics access - skipping sequencing files TSV for sub workspace")
-        print(f'ALL TSVS: {tsv_files}')
         if dry_run:
             logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to sub workspace '{sub_dataset.workspace_name}'")
         else:
