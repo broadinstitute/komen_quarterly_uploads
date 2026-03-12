@@ -450,6 +450,7 @@ def main():
     )
 
     sub_workspace_metadata = []
+    unknown_participant_failures = 0
     if workspace_scope in ("all", "sub"):
         for sub_dataset in dataset_info.sub_datasets:
             if sub_dataset.workspace_name not in sub_workspaces_needing_upload:
@@ -462,20 +463,24 @@ def main():
 
             unknown_participants = sub_participants - all_main_participants
             if unknown_participants:
-                raise ValueError(
-                    f"Sub workspace '{sub_dataset.workspace_name}' contains "
-                    f"{len(unknown_participants)} participant(s) not found in the main workspace: "
-                    f"{sorted(unknown_participants)}"
+                for participant_id in sorted(unknown_participants):
+                    logging.error(f"Participant '{participant_id}' in sub workspace '{sub_dataset.workspace_name}' not found in main workspace")
+                    unknown_participant_failures += 1
+            else:
+                sub_workspace_metadata.append(
+                    {
+                        "workspace_name": sub_dataset.workspace_name,
+                        "participants": sub_participants,
+                        "sub_workspace_terra_obj": sub_workspace_terra_obj,
+                    }
                 )
+                logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
 
-            sub_workspace_metadata.append(
-                {
-                    "workspace_name": sub_dataset.workspace_name,
-                    "participants": sub_participants,
-                    "sub_workspace_terra_obj": sub_workspace_terra_obj,
-                }
-            )
-            logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
+    if unknown_participant_failures:
+        raise ValueError(
+            f"{unknown_participant_failures} participant(s) across sub workspaces are not present in the main workspace. "
+            f"See error log entries above for details."
+        )
 
     # Determine which participants to check genomics files for.
     # If main is being uploaded we need all main participants (they all appear in the main sequencing TSV).
