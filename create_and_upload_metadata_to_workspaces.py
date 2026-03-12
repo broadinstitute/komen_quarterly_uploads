@@ -422,7 +422,11 @@ def main():
     if workspace_scope in ("all", "sub") and not dry_run:
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-            sub_expected_tables = [f"{Path(f).stem}_table" for f in sub_dataset.files]
+            sub_expected_tables = [
+                f"{Path(f).stem}_table"
+                for f in sub_dataset.files
+                if Path(f).name != "patient_enrollment_status.csv"
+            ]  # patient_enrollment_status.csv is main-only
             if sub_dataset.researcher_id in researchers_with_genomics_access:
                 sub_expected_tables.append("sequencing_files_table")
             if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
@@ -444,7 +448,6 @@ def main():
     all_main_participants = csv_transformer.extract_all_participant_ids_from_files(
         file_contents_map=dataset_info.main_file_contents_map
     )
-    logging.info(f"Extracted {len(all_main_participants)} participants from main dataset")
 
     sub_workspace_metadata = []
     if workspace_scope in ("all", "sub"):

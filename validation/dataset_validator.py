@@ -74,6 +74,7 @@ class DatasetValidator:
             logging.error(f"Missing CSV files in {directory_name}: {sorted(missing_files)}")
             return False
 
+        #TODO: Should it fail if there are extra files?
         if extra_files:
             logging.warning(f"Extra CSV files in {directory_name}: {sorted(extra_files)}")
 
@@ -173,7 +174,8 @@ class DatasetValidator:
             # Validate
             is_valid = self.validate_csv_files(
                 directory_name=display_name,
-                expected_files=expected_files,
+                # Will not use patient_enrollment_status.csv, but it is expected in sub dir
+                expected_files=expected_files + ['patient_enrollment_status.csv'],
                 actual_files=file_names
             )
 
