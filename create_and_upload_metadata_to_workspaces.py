@@ -422,7 +422,11 @@ def main():
     if workspace_scope in ("all", "sub") and not dry_run:
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-            sub_expected_tables = [f"{Path(f).stem}_table" for f in sub_dataset.files]
+            sub_expected_tables = [
+                f"{Path(f).stem}_table"
+                for f in sub_dataset.files
+                if Path(f).name != "patient_enrollment_status.csv"
+            ]  # patient_enrollment_status.csv is main-only
             if sub_dataset.researcher_id in researchers_with_genomics_access:
                 sub_expected_tables.append("sequencing_files_table")
             if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
@@ -439,10 +443,16 @@ def main():
 
     # From here on, only runs if at least one workspace needs uploading.
 
+    # Always extract all main participants regardless of scope — sub workspace participants
+    # must be a subset of main, so we need the full main set to validate against.
+    all_main_participants = csv_transformer.extract_all_participant_ids_from_files(
+        file_contents_map=dataset_info.main_file_contents_map
+    )
+
     sub_workspace_metadata = []
+    unknown_participant_failures = 0
     if workspace_scope in ("all", "sub"):
         for sub_dataset in dataset_info.sub_datasets:
-            # Only extract participant IDs for sub workspaces that need uploads
             if sub_dataset.workspace_name not in sub_workspaces_needing_upload:
                 continue
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
@@ -450,23 +460,34 @@ def main():
             sub_participants = csv_transformer.extract_all_participant_ids_from_files(
                 file_contents_map=sub_dataset.file_contents_map
             )
-            sub_workspace_metadata.append(
-                {
-                    "workspace_name": sub_dataset.workspace_name,
-                    "participants": sub_participants,
-                    "sub_workspace_terra_obj": sub_workspace_terra_obj,
-                }
-            )
-            logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants")
+
+            unknown_participants = sub_participants - all_main_participants
+            if unknown_participants:
+                for participant_id in sorted(unknown_participants):
+                    logging.error(f"Participant '{participant_id}' in sub workspace '{sub_dataset.workspace_name}' not found in main workspace")
+                    unknown_participant_failures += 1
+            else:
+                sub_workspace_metadata.append(
+                    {
+                        "workspace_name": sub_dataset.workspace_name,
+                        "participants": sub_participants,
+                        "sub_workspace_terra_obj": sub_workspace_terra_obj,
+                    }
+                )
+                logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
+
+    if unknown_participant_failures:
+        raise ValueError(
+            f"{unknown_participant_failures} participant(s) across sub workspaces are not present in the main workspace. "
+            f"See error log entries above for details."
+        )
 
     # Determine which participants to check genomics files for.
     # If main is being uploaded we need all main participants (they all appear in the main sequencing TSV).
     # If only sub workspaces are being uploaded we only need the union of participants across those workspaces,
     # since no main sequencing TSV is being produced.
     if main_needs_upload:
-        participants_to_check = csv_transformer.extract_all_participant_ids_from_files(
-            file_contents_map=dataset_info.main_file_contents_map
-        )
+        participants_to_check = all_main_participants
         logging.info(f"Checking genomics files for all {len(participants_to_check)} main participants")
     else:
         participants_to_check = set()
