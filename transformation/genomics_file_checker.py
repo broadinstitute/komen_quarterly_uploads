@@ -1,9 +1,13 @@
 """Genomics file existence checking utilities."""
 
+import csv
+import io
 import logging
 from collections import defaultdict
 from typing import Optional
 from ops_utils.gcp_utils import GCPCloudFunctions
+
+_DUPLICATE_MAPPING_FILE = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/duplicate_participant_mapping/duplicate_account_ids.csv"
 
 
 # All file types and their path templates relative to the genomics bucket.
@@ -41,6 +45,22 @@ class GenomicsFileChecker:
         self.gcp = gcp
         self.participant_to_sample = participant_to_sample
         self.genomics_bucket = genomics_bucket
+        self.duplicate_participant_map: dict[str, str] = self._load_duplicate_mapping()
+
+    def _load_duplicate_mapping(self) -> dict[str, str]:
+        """
+        Load the duplicate participant mapping CSV from GCS.
+
+        The CSV has columns 'Participant ID' and 'Active Participant ID'.
+        Returns a dict of {duplicate_participant_id: active_participant_id}.
+        """
+        contents = self.gcp.read_file(cloud_path=_DUPLICATE_MAPPING_FILE)
+        reader = csv.DictReader(io.StringIO(contents))
+        mapping = {
+            row["Participant ID"].strip(): row["Active Participant ID"].strip()
+            for row in reader
+        }
+        return mapping
 
     def check_all_participants(
         self, participants: set[str]
@@ -48,6 +68,10 @@ class GenomicsFileChecker:
         """
         Check every expected genomics file for every participant using a single
         multithreaded call rather than one request per file.
+
+        If a participant ID appears in the duplicate mapping file its active
+        participant ID is used to look up the sample ID and build file paths,
+        but the original participant ID is still used as the key in the result.
 
         Args:
             participants: Set of participant IDs to check.
@@ -61,10 +85,20 @@ class GenomicsFileChecker:
         file_path_ownership: dict[str, tuple[str, str]] = {}
 
         for participant_id in sorted(participants):
-            sample_id = self.participant_to_sample.get(participant_id)
+            # If this participant is a known duplicate, resolve to the active participant
+            # for sample ID lookup only — the original participant_id is kept as the result key.
+            lookup_id = self.duplicate_participant_map.get(participant_id, participant_id)
+            if lookup_id != participant_id:
+                logging.info(
+                    f"Participant {participant_id} is a duplicate — using active participant "
+                    f"{lookup_id} for sample ID lookup"
+                )
+
+            sample_id = self.participant_to_sample.get(lookup_id)
             if not sample_id:
                 logging.warning(
-                    f"No sample ID found for participant {participant_id} — skipping genomics file check"
+                    f"No sample ID found for participant {participant_id} "
+                    f"(lookup ID: {lookup_id}) — skipping genomics file check"
                 )
                 continue
 
@@ -98,6 +132,3 @@ class GenomicsFileChecker:
             f"{len(participants) - len(participant_file_map)} skipped (no sample mapping)"
         )
         return dict(participant_file_map)
-
-
-
