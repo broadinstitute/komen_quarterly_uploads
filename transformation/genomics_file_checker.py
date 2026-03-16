@@ -1,7 +1,7 @@
 """Genomics file existence checking utilities."""
 
 import csv
-import io
+from io import StringIO
 import logging
 from collections import defaultdict
 from typing import Optional
@@ -55,7 +55,7 @@ class GenomicsFileChecker:
         Returns a dict of {duplicate_participant_id: active_participant_id}.
         """
         contents = self.gcp.read_file(cloud_path=_DUPLICATE_MAPPING_FILE)
-        reader = csv.DictReader(io.StringIO(contents))
+        reader = csv.DictReader(StringIO(contents))
         mapping = {
             row["Participant ID"].strip(): row["Active Participant ID"].strip()
             for row in reader
