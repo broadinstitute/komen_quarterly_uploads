@@ -9,11 +9,8 @@ import logging
 import re
 import tempfile
 import shutil
-import csv
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
-from datetime import datetime
-from io import StringIO
 from typing import Optional
 
 from ops_utils.request_util import RunRequest
@@ -22,9 +19,22 @@ from ops_utils.token_util import Token
 from ops_utils.gcp_utils import GCPCloudFunctions
 
 from csv_schemas import MAIN_ONLY_CSVS
-from models.data_models import DatasetInfo, SubDatasetInfo
+from dataset_loader import DatasetLoader
+from models.data_models import DatasetInfo
+from schema_helpers import CsvSchemaHelper
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
+from workspace_config import (
+    BILLING_PROJECT,
+    GENOMICS_BUCKET,
+    GENOMICS_FILE_ACCESS_CSV,
+    GENOMICS_FILE_ACCESS_GROUP_NAME,
+    METADATA_CSVS_BUCKET,
+    PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH,
+    RESEARCH_ADMIN_GROUP_EMAIL,
+    RESEARCHER_ID_TO_EMAIL_MAPPING,
+    get_main_workspace_name,
+)
 from transformation.csv_transformer import CSVTransformer
 from transformation.terra_uploader import TerraUploader
 from transformation.genomics_file_checker import GenomicsFileChecker
@@ -33,31 +43,6 @@ from transformation.genomics_file_checker import GenomicsFileChecker
 logging.basicConfig(
     format="%(levelname)s: %(asctime)s : %(message)s", level=logging.INFO
 )
-
-# Constants
-MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}"
-SUB_WORKSPACE_NAME_TEMPLATE = "{project_name}_{year}_{month}"
-BILLING_PROJECT = "SFC-Research"
-METADATA_CSVS_BUCKET = "fc-fa9fd891-996a-4624-864e-c4f81d165a90"
-
-# Genomics Files Configuration
-# Files are in workspace: SFC-Research/ShareForCures Genomics Files
-GENOMICS_BUCKET = "gs://fc-secure-ba527f7b-105c-437e-84e3-fe7e944efdec/"
-
-# Mapping File Configuration
-# Mapping file is in workspace: SFC-Research/ShareForCures Operational Data Files
-PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/onyx_mapping/onyx_mapping.csv"
-
-# CSV containing all users cleared for genomics file access
-# Located in workspace: SFC-Research/ShareForCures Operational Data Files
-GENOMICS_FILE_ACCESS_CSV = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/researchers_genomic_access.csv"
-
-# Researcher email to ID mapping
-# Located in workspace: SFC-Research/ShareForCures Operational Data Files
-RESEARCHER_ID_TO_EMAIL_MAPPING = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/all_researchers.csv"
-GENOMICS_FILE_ACCESS_GROUP_NAME = "Genomics-Files-Access"
-RESEARCH_ADMIN_GROUP_EMAIL = "Research-Admins@firecloud.org"
-
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -72,20 +57,18 @@ def get_args() -> Namespace:
                         help="Optional path to a file whose contents will be set as the description on every workspace created")
     return parser.parse_args()
 
-def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
+def load_participant_to_sample_mapping(dataset_loader: DatasetLoader) -> dict:
     """
     Load the mapping from participant IDs to sample IDs.
 
     Returns:
         Dictionary mapping participant_id -> sample_id (with K prefix)
     """
-    mapping_file_contents = gcp.read_file(cloud_path=PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH)
-    # The mapping file is expected to have lines in the format: sample_id,participant_id
+    mapping_rows = dataset_loader.read_cloud_csv_as_dicts(PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH)
     mapping_dict = {
-        # Add 'K' prefix to sample_id to match the format in the sequencing files naming
-        line.split(',')[1]: f'K{line.split(",")[0]}'
-        for line in mapping_file_contents.splitlines()
-        if 'Participant ID' not in line and line.strip()  # Skip header and empty lines
+        row["Participant ID"].strip(): f'K{row["Sample ID"].strip()}'
+        for row in mapping_rows
+        if row.get("Participant ID") and row.get("Sample ID")
     }
     logging.info(f"Loaded participant to sample mapping for {len(mapping_dict)} participants")
     return mapping_dict
@@ -150,7 +133,6 @@ def process_sub_workspaces(
     all_participant_files: dict,
     genomics_access_metadata: list[dict],
     researcher_id_mapping: list[dict],
-    gcp: GCPCloudFunctions,
     workspaces_needing_upload: set[str],
     dataset_notes: Optional[str] = None,
     dry_run: bool = False,
@@ -173,7 +155,6 @@ def process_sub_workspaces(
                                Filtered per workspace inside this function.
         genomics_access_metadata: List of all researchers with clearance for genomics file access
         researcher_id_mapping: List of dictionaries mapping ALL researchers IDs to emails
-        gcp: Shared GCPCloudFunctions instance
         workspaces_needing_upload: Set of workspace names that need uploading (pre-determined by caller)
         dataset_notes: Optional workspace description string to set.
         dry_run: If True, log what would be uploaded/modified without actually doing it.
@@ -194,12 +175,16 @@ def process_sub_workspaces(
         researcher_id = None
         for csv_file_path in sub_dataset.files:
             if re.match(r"^researcher_id_\d+_project_id_\d+_metadata\.csv$", Path(csv_file_path).name):
-                project_metadata = get_cloud_csv_contents_as_dict(csv_file_path, gcp)
+                project_metadata = sub_dataset.file_contents_map[csv_file_path]
                 researcher_id = int([row["researcher_id"] for row in project_metadata][0])
                 if researcher_id != sub_dataset.researcher_id:
                     logging.warning(f"Researcher ID mismatch in {csv_file_path}: expected {sub_dataset.researcher_id}, found {researcher_id}")
 
-        has_genomics_access = researcher_id in [user["Researcher ID"] for user in genomics_access_metadata]
+        has_genomics_access = researcher_id in {
+            int(user["Researcher ID"])
+            for user in genomics_access_metadata
+            if str(user.get("Researcher ID", "")).strip()
+        }
 
         if dataset_notes:
             workspace_manager_obj.set_workspace_description(sub_workspace_terra_obj, dataset_notes)
@@ -228,7 +213,11 @@ def process_sub_workspaces(
             terra_uploader.upload_all_tsvs_to_workspace(sub_workspace_terra_obj, tsv_files)
             logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(tsv_files)} files")
 
-        researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
+        researcher_email = [
+            row.get("Email")
+            for row in researcher_id_mapping
+            if str(row.get("Researcher ID", "")).strip() and int(row["Researcher ID"]) == researcher_id
+        ]
         if not researcher_email:
             failure = (
                 f"Researcher ID '{researcher_id}' (workspace '{sub_dataset.workspace_name}') "
@@ -252,79 +241,6 @@ def process_sub_workspaces(
             sub_workspace_terra_obj.update_user_acl(email=RESEARCH_ADMIN_GROUP_EMAIL, access_level="OWNER")
 
     return mapping_failures
-
-
-def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunctions) -> DatasetInfo:
-    """
-    Parse a list of CSV file paths into a DatasetInfo structure.
-
-    Separates files into the main dataset (under shareforcures_dataset_*/) and
-    sub datasets (under researcher_id_*_project_id_*/).
-    Read all file contents in a single multithreaded call then organize them.
-
-    Args:
-        all_csv_paths: List of full GCS file paths to CSV files
-        gcp: Shared GCPCloudFunctions instance
-
-    Returns:
-        DatasetInfo object with files organized by dataset type and their contents
-
-    Example paths:
-        - Main: "example_main_dir/shareforcures_dataset_2026_02/file.csv"
-        - Sub: "example_main_dir/researcher_id_62_project_id_115/file.csv"
-    """
-    # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
-    main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
-    sub_pattern = re.compile(r'/researcher_id_(\d+)_project_id_(\d+)/')
-
-    # Read all files in one multithreaded call
-    all_file_contents: dict[str, str] = gcp.read_files_multithreaded(full_paths=all_csv_paths)
-
-    main_files = []
-    main_file_contents = {}
-    sub_datasets_dict = {}  # Key: (researcher_id, project_id), Value: dict with 'files' and 'contents'
-
-    for file_path in all_csv_paths:
-        raw_contents = all_file_contents[file_path]
-        contents_as_list = list(csv.DictReader(StringIO(raw_contents)))
-
-        if main_pattern.search(file_path):
-            main_files.append(file_path)
-            main_file_contents[file_path] = contents_as_list
-        else:
-            sub_match = sub_pattern.search(file_path)
-            if sub_match:
-                researcher_id = int(sub_match.group(1))
-                project_id = int(sub_match.group(2))
-                key = (researcher_id, project_id)
-
-                if key not in sub_datasets_dict:
-                    sub_datasets_dict[key] = {"files": [], "contents": {}}
-                sub_datasets_dict[key]["files"].append(file_path)
-                sub_datasets_dict[key]["contents"][file_path] = contents_as_list
-
-    sub_datasets = [
-        SubDatasetInfo(
-            files=data["files"],
-            file_contents_map=data["contents"],
-            researcher_id=researcher_id,
-            project_id=project_id
-        )
-        for (researcher_id, project_id), data in sub_datasets_dict.items()
-    ]
-
-    return DatasetInfo(
-        main_dataset_files=main_files,
-        main_file_contents_map=main_file_contents,
-        sub_datasets=sub_datasets
-    )
-
-def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> list[dict]:
-    file_contents = gcp.read_file(cloud_path=cloud_path)
-    csv_text = file_contents.lstrip("\ufeff")
-    reader = csv.DictReader(StringIO(csv_text))
-    return list(reader)
-
 def add_researchers_with_genomics_access_to_group(file_access_contents: list[dict], request_util_obj: RunRequest, dry_run: bool = False) -> None:
     emails_with_genomic_file_access = [row["Email"] for row in file_access_contents]
     if dry_run:
@@ -363,10 +279,11 @@ def main():
 
     # Single shared GCP client used throughout
     gcp = GCPCloudFunctions()
+    dataset_loader = DatasetLoader(gcp)
 
-    blob_metadata = gcp.list_bucket_contents(bucket_name=METADATA_CSVS_BUCKET, file_extensions_to_include=[".csv"], file_name_only=True)
-    all_csv_paths = [a["path"] for a in blob_metadata]
-    dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths, gcp)
+    dataset_info = dataset_loader.parse_csv_paths_to_dataset_info(
+        dataset_loader.list_bucket_csv_paths(METADATA_CSVS_BUCKET)
+    )
 
     # Initialize components
     validator = DatasetValidator()
@@ -388,7 +305,7 @@ def main():
     workspace_manager = WorkspaceManager(
         request_util=request_util,
         billing_project=BILLING_PROJECT,
-        main_workspace_name=MAIN_WORKSPACE_NAME,
+        main_workspace_name=get_main_workspace_name(),
         dry_run=dry_run,
     )
 
@@ -405,13 +322,13 @@ def main():
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
     # before deciding whether uploads are needed (avoids falsely flagging missing sequencing_files_table
     # for researchers who don't have genomics access).
-    genomics_access_contents = get_cloud_csv_contents_as_dict(GENOMICS_FILE_ACCESS_CSV, gcp)
+    genomics_access_contents = dataset_loader.read_cloud_csv_as_dicts(GENOMICS_FILE_ACCESS_CSV)
     researchers_with_genomics_access = {int(row["Researcher ID"]) for row in genomics_access_contents}
 
     # Determine which workspaces actually need uploads before doing any heavy processing.
     # A workspace is skipped only if all its expected tables already exist (and --force is not set).
     if workspace_scope in ("all", "main") and not dry_run:
-        main_expected_tables = [f"{Path(f).stem}_table" for f in dataset_info.main_dataset_files] + ["sequencing_files_table"]
+        main_expected_tables = CsvSchemaHelper.get_main_expected_table_names(dataset_info.main_dataset_files)
         main_needs_upload = not workspace_manager.should_skip_uploads(main_workspace_terra_obj, main_expected_tables, force)
     elif workspace_scope in ("all", "main"):
         main_needs_upload = True  # dry_run always proceeds
@@ -422,13 +339,10 @@ def main():
     if workspace_scope in ("all", "sub") and not dry_run:
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-            sub_expected_tables = [
-                f"{Path(f).stem}_table"
-                for f in sub_dataset.files
-                if Path(f).name != "patient_enrollment_status.csv"
-            ]  # patient_enrollment_status.csv is main-only
-            if sub_dataset.researcher_id in researchers_with_genomics_access:
-                sub_expected_tables.append("sequencing_files_table")
+            sub_expected_tables = CsvSchemaHelper.get_sub_expected_table_names(
+                sub_dataset_files=sub_dataset.files,
+                include_sequencing_table=sub_dataset.researcher_id in researchers_with_genomics_access,
+            )
             if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
                 sub_workspaces_needing_upload.add(sub_dataset.workspace_name)
     elif workspace_scope in ("all", "sub"):
@@ -495,7 +409,7 @@ def main():
             participants_to_check.update(ws_meta["participants"])
         logging.info(f"Checking genomics files for {len(participants_to_check)} participant(s) across {len(sub_workspace_metadata)} sub workspace(s) needing upload")
 
-    participant_to_sample = load_participant_to_sample_mapping(gcp)
+    participant_to_sample = load_participant_to_sample_mapping(dataset_loader)
     if not participant_to_sample:
         logging.error("Failed to load participant to sample ID mapping. Exiting.")
         exit(1)
@@ -523,7 +437,7 @@ def main():
     add_researchers_with_genomics_access_to_group(file_access_contents=genomics_access_contents, request_util_obj=request_util, dry_run=dry_run)
     logging.info("Completed adding researchers to genomics access group")
 
-    researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING, gcp=gcp)
+    researcher_id_mapping = dataset_loader.read_cloud_csv_as_dicts(RESEARCHER_ID_TO_EMAIL_MAPPING)
 
     # Process main workspace
     if workspace_scope in ("all", "main") and main_needs_upload:
@@ -551,7 +465,6 @@ def main():
             all_participant_files=all_participant_files,
             genomics_access_metadata=genomics_access_contents,
             researcher_id_mapping=researcher_id_mapping,
-            gcp=gcp,
             workspaces_needing_upload=sub_workspaces_needing_upload,
             dataset_notes=dataset_notes,
             dry_run=dry_run,

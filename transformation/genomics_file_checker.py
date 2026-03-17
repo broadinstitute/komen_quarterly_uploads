@@ -54,13 +54,45 @@ class GenomicsFileChecker:
         The CSV has columns 'Participant ID' and 'Active Participant ID'.
         Returns a dict of {duplicate_participant_id: active_participant_id}.
         """
-        contents = self.gcp.read_file(cloud_path=_DUPLICATE_MAPPING_FILE)
+        contents = self.gcp.read_file(cloud_path=_DUPLICATE_MAPPING_FILE).lstrip("\ufeff")
         reader = csv.DictReader(StringIO(contents))
-        mapping = {
-            row["Participant ID"].strip(): row["Active Participant ID"].strip()
-            for row in reader
-        }
+
+        def normalize_header(header_name: str) -> str:
+            return header_name.strip().lstrip("\ufeff").lower().replace("_", " ")
+
+        mapping = {}
+        for row in reader:
+            normalized_row = {
+                normalize_header(header_name): value.strip()
+                for header_name, value in row.items()
+                if header_name is not None and value is not None
+            }
+            participant_id = normalized_row.get("participant id")
+            active_participant_id = normalized_row.get("active participant id")
+            if participant_id and active_participant_id:
+                mapping[participant_id] = active_participant_id
+
+        if not mapping and reader.fieldnames:
+            normalized_headers = [normalize_header(header_name) for header_name in reader.fieldnames if header_name]
+            raise ValueError(
+                f"Duplicate participant mapping file {_DUPLICATE_MAPPING_FILE} did not contain usable "
+                f"'Participant ID' / 'Active Participant ID' columns. Found headers: {normalized_headers}"
+            )
         return mapping
+
+    @staticmethod
+    def check_file_paths(gcp: GCPCloudFunctions, file_paths: list[str] | set[str]) -> dict[str, bool]:
+        """Check a deduplicated set of full GCS file paths in one multithreaded call."""
+        unique_file_paths = sorted(set(file_paths))
+        if not unique_file_paths:
+            return {}
+
+        existence_map = gcp.check_files_exist_multithreaded(full_paths=unique_file_paths)
+        logging.info(
+            f"Checked existence for {len(unique_file_paths)} uploaded genomics file path(s); "
+            f"{sum(1 for exists in existence_map.values() if not exists)} missing"
+        )
+        return existence_map
 
     def check_all_participants(
         self, participants: set[str]

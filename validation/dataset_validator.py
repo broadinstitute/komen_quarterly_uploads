@@ -1,15 +1,13 @@
 """Dataset validation logic."""
 import logging
 import re
-from io import StringIO
 from pathlib import Path
-import csv
 
 from pydantic import ValidationError
-from ops_utils.gcp_utils import GCPCloudFunctions
 
-from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file, CSV_SCHEMA_MAP
+from csv_schemas import MAIN_CSVS, get_sub_list_with_research_metadata_file
 from models.data_models import DatasetInfo
+from schema_helpers import CsvSchemaHelper
 
 
 class DatasetValidator:
@@ -34,22 +32,6 @@ class DatasetValidator:
             "researcher_id": int(match.group(1)),
             "project_id": int(match.group(2))
         }
-
-    @staticmethod
-    def read_metadata_csv(csv_path: str) -> dict:
-        """
-        Read metadata from a CSV file and return the first row as a dictionary.
-
-        Args:
-            csv_path: Path to the metadata CSV file
-
-        Returns:
-            Dictionary with column names as keys and values from first data row
-        """
-        file_contents = GCPCloudFunctions().read_file(cloud_path=csv_path)
-        reader = csv.DictReader(StringIO(file_contents))
-
-        return list(reader)[0]
 
     @staticmethod
     def validate_csv_files(directory_name: str, expected_files: list[str], actual_files: list[str]) -> bool:
@@ -82,7 +64,33 @@ class DatasetValidator:
         return True
 
     @staticmethod
-    def validate_csv_contents(file_contents_map: dict[str, list[dict]], context: str) -> bool:
+    def validate_rows_for_filename(rows: list[dict], filename: str, context: str) -> bool:
+        """Validate rows for a single CSV filename against its matching schema model."""
+        model = CsvSchemaHelper.get_model_for_csv_filename(filename)
+
+        if model is None:
+            return True
+
+        errors_for_file = []
+        for row_num, row in enumerate(rows, start=1):
+            try:
+                model(**row)
+            except ValidationError as e:
+                for error in e.errors():
+                    field = " -> ".join(str(loc) for loc in error["loc"])
+                    errors_for_file.append(f"  Row {row_num}, field '{field}': {error['msg']}")
+
+        if errors_for_file:
+            logging.error(
+                f"[{context}] Schema validation failed for {filename} "
+                f"({len(errors_for_file)} error(s)):\n" + "\n".join(errors_for_file)
+            )
+            return False
+
+        return True
+
+    @classmethod
+    def validate_csv_contents(cls, file_contents_map: dict[str, list[dict]], context: str) -> bool:
         """
         Validate the contents of each CSV against its pydantic model.
 
@@ -97,26 +105,7 @@ class DatasetValidator:
 
         for file_path, rows in file_contents_map.items():
             filename = Path(file_path).name
-            model = CSV_SCHEMA_MAP.get(filename)
-
-            if model is None:
-                # Metadata file or unknown file — skip schema validation
-                continue
-
-            errors_for_file = []
-            for row_num, row in enumerate(rows, start=1):
-                try:
-                    model(**row)
-                except ValidationError as e:
-                    for error in e.errors():
-                        field = " -> ".join(str(loc) for loc in error["loc"])
-                        errors_for_file.append(f"  Row {row_num}, field '{field}': {error['msg']}")
-
-            if errors_for_file:
-                logging.error(
-                    f"[{context}] Schema validation failed for {filename} "
-                    f"({len(errors_for_file)} error(s)):\n" + "\n".join(errors_for_file)
-                )
+            if not cls.validate_rows_for_filename(rows=rows, filename=filename, context=context):
                 all_valid = False
         return all_valid
 
@@ -194,7 +183,13 @@ class DatasetValidator:
                     validation_results[display_name] = False
                     continue
 
-                metadata = self.read_metadata_csv(metadata_path)
+                metadata_rows = sub_dir_info.file_contents_map.get(metadata_path, [])
+                if not metadata_rows:
+                    logging.error(f"Metadata file has no rows: {metadata_path}")
+                    validation_results[display_name] = False
+                    continue
+
+                metadata = metadata_rows[0]
 
                 # project_name is required
                 project_name = metadata.get('project_name', '').strip()
