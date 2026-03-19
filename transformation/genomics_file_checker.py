@@ -55,7 +55,7 @@ class GenomicsFileChecker:
         Returns a dict of {duplicate_participant_id: active_participant_id}.
         """
         contents = self.gcp.read_file(cloud_path=_DUPLICATE_MAPPING_FILE)
-        reader = csv.DictReader(StringIO(contents))
+        reader = csv.DictReader(StringIO(contents.lstrip("\ufeff")), skipinitialspace=True)
         mapping = {
             row["Participant ID"].strip(): row["Active Participant ID"].strip()
             for row in reader

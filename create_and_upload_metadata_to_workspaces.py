@@ -2,19 +2,17 @@
 Main script for Komen Quarterly Uploads.
 
 This script validates CSV datasets from a Google bucket, creates Terra workspaces,
-transforms and uploads CSV data, and generates sequencing file manifests.
+converts CSV rows into Terra table payloads, and uploads all metadata with batch upsert.
 """
 
 import logging
 import re
-import tempfile
-import shutil
 import csv
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
 from io import StringIO
-from typing import Optional
+from typing import Optional, Any
 
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace, TerraGroups, MEMBER, ADMIN
@@ -25,8 +23,7 @@ from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
-from transformation.csv_transformer import CSVTransformer
-from transformation.terra_uploader import TerraUploader
+from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
 from transformation.genomics_file_checker import GenomicsFileChecker
 
 
@@ -65,7 +62,7 @@ def get_args() -> Namespace:
     parser.add_argument("--force", "-f", action="store_true",
                         help="Skip table existence checks and upload all data regardless of current workspace state")
     parser.add_argument("--dry_run", "-d", action="store_true",
-                        help="Log what would happen without creating workspaces, uploading TSVs, or modifying ACLs")
+                        help="Log what would happen without creating workspaces, uploading metadata, or modifying ACLs")
     parser.add_argument("--workspace_scope", "-w", choices=["all", "main", "sub"], default="all",
                         help="Which workspaces to create and upload: 'all' (default), 'main' only, or 'sub' only")
     parser.add_argument("--dataset_notes", "-n", default=None,
@@ -80,12 +77,11 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
         Dictionary mapping participant_id -> sample_id (with K prefix)
     """
     mapping_file_contents = gcp.read_file(cloud_path=PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH)
-    # The mapping file is expected to have lines in the format: sample_id,participant_id
+    reader = csv.DictReader(StringIO(mapping_file_contents.lstrip("\ufeff")))
     mapping_dict = {
-        # Add 'K' prefix to sample_id to match the format in the sequencing files naming
-        line.split(',')[1]: f'K{line.split(",")[0]}'
-        for line in mapping_file_contents.splitlines()
-        if 'Participant ID' not in line and line.strip()  # Skip header and empty lines
+        row["Participant ID"].strip(): f"K{row['Sample ID'].strip()}"
+        for row in reader
+        if row.get("Participant ID") and row.get("Sample ID")
     }
     logging.info(f"Loaded participant to sample mapping for {len(mapping_dict)} participants")
     return mapping_dict
@@ -93,10 +89,7 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
 def process_main_workspace(
     dataset_info: DatasetInfo,
     terra_workspace_obj: TerraWorkspace,
-    csv_transformer: CSVTransformer,
-    terra_uploader: TerraUploader,
     workspace_manager: WorkspaceManager,
-    temp_dir: str,
     participant_files: dict[str, dict[str, Optional[str]]],
     dataset_notes: Optional[str] = None,
     dry_run: bool = False,
@@ -110,10 +103,7 @@ def process_main_workspace(
     Args:
         dataset_info: Dataset information
         terra_workspace_obj: TerraWorkspace object for the main workspace
-        csv_transformer: CSV transformer instance
-        terra_uploader: Terra uploader instance
         workspace_manager: WorkspaceManager instance used for setting description and column order
-        temp_dir: Temporary directory for transformed files
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
         dataset_notes: Optional workspace description string to set.
@@ -122,31 +112,34 @@ def process_main_workspace(
     if dataset_notes:
         workspace_manager.set_workspace_description(terra_workspace_obj, dataset_notes)
 
-    tsv_files = []
+    table_data = {}
     for csv_file_path in dataset_info.main_dataset_files:
         file_contents = dataset_info.main_file_contents_map[csv_file_path]
-        tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
+        table_data.update(
+            convert_csv_rows_to_table_data(
+                csv_path=csv_file_path,
+                file_contents=file_contents,
+            )
+        )
 
-    sequencing_tsv_path = Path(temp_dir) / "sequencing_files.tsv"
-    csv_transformer.create_sequencing_files_tsv(
-        participant_files=participant_files,
-        output_path=str(sequencing_tsv_path),
+    table_data.update(
+        create_sequencing_files_table_data(
+            participant_files=participant_files,
+        )
     )
-    tsv_files.append(str(sequencing_tsv_path))
-    logging.info(f"Created master sequencing files TSV with {len(participant_files)} participants")
+    logging.info(f"Built master sequencing files table data with {len(participant_files)} participants")
     if dry_run:
-        logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to main workspace '{terra_workspace_obj.workspace_name}'")
+        logging.info(
+            f"DRY RUN: Would upload {len(table_data)} table(s) to main workspace '{terra_workspace_obj.workspace_name}'"
+        )
     else:
-        terra_uploader.upload_all_tsvs_to_workspace(terra_workspace_obj, tsv_files)
-        logging.info(f"Completed upload to main workspace: {len(tsv_files)} files")
+        workspace_manager.upload_table_data_to_workspace(terra_workspace_obj, table_data)
+        logging.info(f"Completed upload to main workspace: {len(table_data)} tables")
 
 def process_sub_workspaces(
     dataset_info: DatasetInfo,
     sub_workspace_metadata: list[dict],
-    csv_transformer: CSVTransformer,
-    terra_uploader: TerraUploader,
     workspace_manager_obj: WorkspaceManager,
-    temp_dir: str,
     all_participant_files: dict,
     genomics_access_metadata: list[dict],
     researcher_id_mapping: list[dict],
@@ -164,10 +157,7 @@ def process_sub_workspaces(
     Args:
         dataset_info: Dataset information
         sub_workspace_metadata: List of dictionaries with sub workspace name, participant set, and TerraWorkspace object
-        csv_transformer: CSV transformer instance
-        terra_uploader: Terra uploader instance
         workspace_manager_obj: WorkspaceManager instance
-        temp_dir: Temporary directory for transformed files
         all_participant_files: Full dict of participant_id -> {file_type: path_or_None}
                                as returned by GenomicsFileChecker.check_all_participants().
                                Filtered per workspace inside this function.
@@ -199,34 +189,40 @@ def process_sub_workspaces(
                 if researcher_id != sub_dataset.researcher_id:
                     logging.warning(f"Researcher ID mismatch in {csv_file_path}: expected {sub_dataset.researcher_id}, found {researcher_id}")
 
-        has_genomics_access = researcher_id in [user["Researcher ID"] for user in genomics_access_metadata]
+        has_genomics_access = researcher_id in {int(user["Researcher ID"]) for user in genomics_access_metadata}
 
         if dataset_notes:
             workspace_manager_obj.set_workspace_description(sub_workspace_terra_obj, dataset_notes)
 
-        tsv_files = []
+        table_data = {}
         for csv_file_path in sub_dataset.files:
-            # We want to skip uploading the patient_enrollment_status.csv file
+            # patient_enrollment_status.csv exists in sub directories but only uploads to the main workspace.
             if Path(csv_file_path).name not in MAIN_ONLY_CSVS:
                 file_contents = sub_dataset.file_contents_map[csv_file_path]
-                tsv_files.append(csv_transformer.transform_and_convert_csv(csv_path=csv_file_path, file_contents=file_contents, output_dir=temp_dir))
+                table_data.update(
+                    convert_csv_rows_to_table_data(
+                        csv_path=csv_file_path,
+                        file_contents=file_contents,
+                    )
+                )
 
         if has_genomics_access:
-            logging.info("Researcher has genomics access - creating sequencing files TSV for sub workspace")
+            logging.info("Researcher has genomics access - building sequencing files table data for sub workspace")
             participant_files = {p: all_participant_files[p] for p in ws_meta["participants"] if p in all_participant_files}
-            sequencing_tsv_path = Path(temp_dir) / f"sequencing_files_{sub_dataset.workspace_name}.tsv"
-            csv_transformer.create_sequencing_files_tsv(
-                participant_files=participant_files,
-                output_path=str(sequencing_tsv_path),
+            table_data.update(
+                create_sequencing_files_table_data(
+                    participant_files=participant_files,
+                )
             )
-            tsv_files.append(str(sequencing_tsv_path))
         else:
-            logging.info("Researcher does not have genomics access - skipping sequencing files TSV for sub workspace")
+            logging.info("Researcher does not have genomics access - skipping sequencing files table for sub workspace")
         if dry_run:
-            logging.info(f"DRY RUN: Would upload {len(tsv_files)} TSV(s) to sub workspace '{sub_dataset.workspace_name}'")
+            logging.info(
+                f"DRY RUN: Would upload {len(table_data)} table(s) to sub workspace '{sub_dataset.workspace_name}'"
+            )
         else:
-            terra_uploader.upload_all_tsvs_to_workspace(sub_workspace_terra_obj, tsv_files)
-            logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(tsv_files)} files")
+            workspace_manager_obj.upload_table_data_to_workspace(sub_workspace_terra_obj, table_data)
+            logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(table_data)} tables")
 
         researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
         if not researcher_email:
@@ -286,7 +282,9 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
 
     for file_path in all_csv_paths:
         raw_contents = all_file_contents[file_path]
-        contents_as_list = list(csv.DictReader(StringIO(raw_contents)))
+        # Some source CSVs may include a UTF-8 BOM on the first header; strip it once here
+        # so the parsed headers match the pydantic schema field names exactly.
+        contents_as_list = list(csv.DictReader(StringIO(raw_contents.lstrip("\ufeff"))))
 
         if main_pattern.search(file_path):
             main_files.append(file_path)
@@ -345,6 +343,34 @@ def add_researchers_with_genomics_access_to_group(file_access_contents: list[dic
         else:
             logging.info(f"User '{email}' already has access to genomics files group '{GENOMICS_FILE_ACCESS_GROUP_NAME}' — skipping")
 
+
+def extract_all_participant_ids_from_files(
+    file_contents_map: dict[str, list[dict[str, Any]]],
+    patient_id_column: str = "patient_id"
+) -> set[str]:
+    """
+    Extract all participant IDs from a list of CSV file paths.
+
+    Args:
+        file_contents_map: Dictionary mapping file paths to their contents (list of row dictionaries).
+        patient_id_column: Name of the column containing patient IDs (default: 'patient_id')
+
+    Returns:
+        Set of all unique participant IDs found
+    """
+    all_participant_ids = set()
+
+    # Process all CSV files
+    for csv_file_path, file_contents in file_contents_map.items():
+        # Extract participant IDs
+        for row in file_contents:
+            if patient_id := row.get(patient_id_column, "").strip():
+                all_participant_ids.add(patient_id)
+
+    logging.info(f"Extracted {len(all_participant_ids)} unique participant IDs from {len(file_contents_map)} files")
+    return all_participant_ids
+
+
 def main():
     """Main execution function."""
     args = get_args()
@@ -370,14 +396,8 @@ def main():
 
     # Initialize components
     validator = DatasetValidator()
-    csv_transformer = CSVTransformer()
     token = Token()
     request_util = RunRequest(token=token)
-    # Initialize uploader
-    terra_uploader = TerraUploader(request_util=request_util)
-    # Create temp directory for transformed files
-    temp_dir = tempfile.mkdtemp(prefix="terra_upload_")
-    logging.info(f"Using temp directory: {temp_dir}")
 
     # Validate all datasets
     if not validator.validate_all(dataset_info):
@@ -438,14 +458,13 @@ def main():
 
     if not any_workspace_needs_upload:
         logging.info("All workspaces already have all expected tables — nothing to upload.")
-        shutil.rmtree(temp_dir)
         return
 
     # From here on, only runs if at least one workspace needs uploading.
 
     # Always extract all main participants regardless of scope — sub workspace participants
     # must be a subset of main, so we need the full main set to validate against.
-    all_main_participants = csv_transformer.extract_all_participant_ids_from_files(
+    all_main_participants = extract_all_participant_ids_from_files(
         file_contents_map=dataset_info.main_file_contents_map
     )
 
@@ -457,7 +476,7 @@ def main():
                 continue
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
             logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
-            sub_participants = csv_transformer.extract_all_participant_ids_from_files(
+            sub_participants = extract_all_participant_ids_from_files(
                 file_contents_map=sub_dataset.file_contents_map
             )
 
@@ -483,9 +502,9 @@ def main():
         )
 
     # Determine which participants to check genomics files for.
-    # If main is being uploaded we need all main participants (they all appear in the main sequencing TSV).
-    # If only sub workspaces are being uploaded we only need the union of participants across those workspaces,
-    # since no main sequencing TSV is being produced.
+    # If main is being uploaded we need all main participants because they all appear in the
+    # main sequencing_files_table. If only sub workspaces are being uploaded we only need the
+    # union of participants across those workspaces.
     if main_needs_upload:
         participants_to_check = all_main_participants
         logging.info(f"Checking genomics files for all {len(participants_to_check)} main participants")
@@ -530,10 +549,7 @@ def main():
         process_main_workspace(
             dataset_info=dataset_info,
             terra_workspace_obj=main_workspace_terra_obj,
-            csv_transformer=csv_transformer,
-            terra_uploader=terra_uploader,
             workspace_manager=workspace_manager,
-            temp_dir=temp_dir,
             participant_files=all_participant_files,
             dataset_notes=dataset_notes,
             dry_run=dry_run,
@@ -544,10 +560,7 @@ def main():
         sub_mapping_failures = process_sub_workspaces(
             dataset_info=dataset_info,
             sub_workspace_metadata=sub_workspace_metadata,
-            csv_transformer=csv_transformer,
-            terra_uploader=terra_uploader,
             workspace_manager_obj=workspace_manager,
-            temp_dir=temp_dir,
             all_participant_files=all_participant_files,
             genomics_access_metadata=genomics_access_contents,
             researcher_id_mapping=researcher_id_mapping,
@@ -558,8 +571,6 @@ def main():
         )
         mapping_failures.extend(sub_mapping_failures)
 
-    # Clean up temp directory
-    shutil.rmtree(temp_dir)
 
     logging.info(
         f"Successfully processed "
