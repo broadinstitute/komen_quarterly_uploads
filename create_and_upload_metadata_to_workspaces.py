@@ -239,8 +239,8 @@ def process_sub_workspaces(
                     invite_users_not_found=True
                 )
             sub_workspace_terra_obj.update_user_acl(email=RESEARCH_ADMIN_GROUP_EMAIL, access_level="OWNER")
-
     return mapping_failures
+
 def add_researchers_with_genomics_access_to_group(file_access_contents: list[dict], request_util_obj: RunRequest, dry_run: bool = False) -> None:
     emails_with_genomic_file_access = [row["Email"] for row in file_access_contents]
     if dry_run:
@@ -260,6 +260,115 @@ def add_researchers_with_genomics_access_to_group(file_access_contents: list[dic
             )
         else:
             logging.info(f"User '{email}' already has access to genomics files group '{GENOMICS_FILE_ACCESS_GROUP_NAME}' — skipping")
+
+
+def build_requested_workspaces(
+    workspace_manager: WorkspaceManager,
+    dataset_info: DatasetInfo,
+    workspace_scope: str,
+) -> tuple[Optional[TerraWorkspace], dict[str, TerraWorkspace]]:
+    """Create or fetch only the Terra workspaces requested for this run."""
+    main_workspace = None
+    if workspace_scope in ("all", "main"):
+        # We need a real Terra object here because the next phase checks whether the expected
+        # tables already exist and can skip the rest of the work if they do.
+        main_workspace = workspace_manager.create_workspace(workspace_manager.main_workspace_name)
+
+    sub_workspaces: dict[str, TerraWorkspace] = {}
+    if workspace_scope in ("all", "sub"):
+        sub_workspaces = workspace_manager.build_sub_workspaces(dataset_info=dataset_info, create=True)
+
+    return main_workspace, sub_workspaces
+
+
+def determine_workspaces_needing_upload(
+    dataset_info: DatasetInfo,
+    workspace_manager: WorkspaceManager,
+    workspace_scope: str,
+    dry_run: bool,
+    force: bool,
+    main_workspace: Optional[TerraWorkspace],
+    sub_workspaces: dict[str, TerraWorkspace],
+    researchers_with_genomics_access: set[int],
+) -> tuple[bool, set[str]]:
+    """Return which requested workspaces still need metadata uploads."""
+    if workspace_scope in ("all", "main") and not dry_run:
+        main_expected_tables = CsvSchemaHelper.get_main_expected_table_names(dataset_info.main_dataset_files)
+        main_needs_upload = not workspace_manager.should_skip_uploads(main_workspace, main_expected_tables, force)
+    elif workspace_scope in ("all", "main"):
+        main_needs_upload = True  # dry_run logs the work instead of skipping it
+    else:
+        main_needs_upload = False
+
+    sub_workspaces_needing_upload: set[str] = set()
+    if workspace_scope in ("all", "sub") and not dry_run:
+        for sub_dataset in dataset_info.sub_datasets:
+            sub_expected_tables = CsvSchemaHelper.get_sub_expected_table_names(
+                sub_dataset_files=sub_dataset.files,
+                include_sequencing_table=sub_dataset.researcher_id in researchers_with_genomics_access,
+            )
+            if not workspace_manager.should_skip_uploads(
+                sub_workspaces[sub_dataset.workspace_name],
+                sub_expected_tables,
+                force,
+            ):
+                sub_workspaces_needing_upload.add(sub_dataset.workspace_name)
+    elif workspace_scope in ("all", "sub"):
+        sub_workspaces_needing_upload = {sub_dataset.workspace_name for sub_dataset in dataset_info.sub_datasets}
+
+    return main_needs_upload, sub_workspaces_needing_upload
+
+
+def collect_sub_workspace_metadata(
+    dataset_info: DatasetInfo,
+    sub_workspaces: dict[str, TerraWorkspace],
+    workspaces_needing_upload: set[str],
+    csv_transformer: CSVTransformer,
+    all_main_participants: set[str],
+) -> list[dict]:
+    """Collect participants per sub workspace and fail if any sub participant is missing from main."""
+    sub_workspace_metadata = []
+    unknown_participant_failures = 0
+
+    for sub_dataset in dataset_info.sub_datasets:
+        if sub_dataset.workspace_name not in workspaces_needing_upload:
+            continue
+
+        logging.info(
+            f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}"
+        )
+        sub_participants = csv_transformer.extract_all_participant_ids_from_files(
+            file_contents_map=sub_dataset.file_contents_map
+        )
+        unknown_participants = sub_participants - all_main_participants
+        if unknown_participants:
+            # Every sub workspace participant must already exist in the main dataset. We log all
+            # violations first so one bad participant does not hide the rest.
+            for participant_id in sorted(unknown_participants):
+                logging.error(
+                    f"Participant '{participant_id}' in sub workspace '{sub_dataset.workspace_name}' not found in main workspace"
+                )
+                unknown_participant_failures += 1
+            continue
+
+        sub_workspace_metadata.append(
+            {
+                "workspace_name": sub_dataset.workspace_name,
+                "participants": sub_participants,
+                "sub_workspace_terra_obj": sub_workspaces[sub_dataset.workspace_name],
+            }
+        )
+        logging.info(
+            f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main"
+        )
+
+    if unknown_participant_failures:
+        raise ValueError(
+            f"{unknown_participant_failures} participant(s) across sub workspaces are not present in the main workspace. "
+            f"See error log entries above for details."
+        )
+
+    return sub_workspace_metadata
 
 def main():
     """Main execution function."""
@@ -281,9 +390,9 @@ def main():
     gcp = GCPCloudFunctions()
     dataset_loader = DatasetLoader(gcp)
 
-    dataset_info = dataset_loader.parse_csv_paths_to_dataset_info(
-        dataset_loader.list_bucket_csv_paths(METADATA_CSVS_BUCKET)
-    )
+    bucket_csvs = dataset_loader.list_bucket_csv_paths(METADATA_CSVS_BUCKET)
+
+    dataset_info = dataset_loader.parse_csv_paths_to_dataset_info(bucket_csvs)
 
     # Initialize components
     validator = DatasetValidator()
@@ -309,15 +418,11 @@ def main():
         dry_run=dry_run,
     )
 
-    # Create the main workspace
-    main_workspace_terra_obj = None
-    if workspace_scope in ("all", "main"):
-        main_workspace_terra_obj = workspace_manager.create_main_workspace()
-
-    # Create sub workspaces
-    sub_workspaces: dict[str, TerraWorkspace] = {}
-    if workspace_scope in ("all", "sub"):
-        sub_workspaces = workspace_manager.create_all_sub_workspaces(dataset_info=dataset_info)
+    main_workspace_terra_obj, sub_workspaces = build_requested_workspaces(
+        workspace_manager=workspace_manager,
+        dataset_info=dataset_info,
+        workspace_scope=workspace_scope,
+    )
 
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
     # before deciding whether uploads are needed (avoids falsely flagging missing sequencing_files_table
@@ -325,28 +430,17 @@ def main():
     genomics_access_contents = dataset_loader.read_cloud_csv_as_dicts(GENOMICS_FILE_ACCESS_CSV)
     researchers_with_genomics_access = {int(row["Researcher ID"]) for row in genomics_access_contents}
 
-    # Determine which workspaces actually need uploads before doing any heavy processing.
-    # A workspace is skipped only if all its expected tables already exist (and --force is not set).
-    if workspace_scope in ("all", "main") and not dry_run:
-        main_expected_tables = CsvSchemaHelper.get_main_expected_table_names(dataset_info.main_dataset_files)
-        main_needs_upload = not workspace_manager.should_skip_uploads(main_workspace_terra_obj, main_expected_tables, force)
-    elif workspace_scope in ("all", "main"):
-        main_needs_upload = True  # dry_run always proceeds
-    else:
-        main_needs_upload = False
-
-    sub_workspaces_needing_upload: set[str] = set()
-    if workspace_scope in ("all", "sub") and not dry_run:
-        for sub_dataset in dataset_info.sub_datasets:
-            sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-            sub_expected_tables = CsvSchemaHelper.get_sub_expected_table_names(
-                sub_dataset_files=sub_dataset.files,
-                include_sequencing_table=sub_dataset.researcher_id in researchers_with_genomics_access,
-            )
-            if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
-                sub_workspaces_needing_upload.add(sub_dataset.workspace_name)
-    elif workspace_scope in ("all", "sub"):
-        sub_workspaces_needing_upload = {sd.workspace_name for sd in dataset_info.sub_datasets}  # dry_run always proceeds
+    # Decide which workspaces still need work before doing genomics checks or creating TSVs.
+    main_needs_upload, sub_workspaces_needing_upload = determine_workspaces_needing_upload(
+        dataset_info=dataset_info,
+        workspace_manager=workspace_manager,
+        workspace_scope=workspace_scope,
+        dry_run=dry_run,
+        force=force,
+        main_workspace=main_workspace_terra_obj,
+        sub_workspaces=sub_workspaces,
+        researchers_with_genomics_access=researchers_with_genomics_access,
+    )
 
     any_workspace_needs_upload = main_needs_upload or bool(sub_workspaces_needing_upload)
 
@@ -356,6 +450,8 @@ def main():
         return
 
     # From here on, only runs if at least one workspace needs uploading.
+    # This keeps us from spending time resolving participant/sample mappings or checking genomics
+    # files when Terra already has every expected table.
 
     # Always extract all main participants regardless of scope — sub workspace participants
     # must be a subset of main, so we need the full main set to validate against.
@@ -364,36 +460,13 @@ def main():
     )
 
     sub_workspace_metadata = []
-    unknown_participant_failures = 0
     if workspace_scope in ("all", "sub"):
-        for sub_dataset in dataset_info.sub_datasets:
-            if sub_dataset.workspace_name not in sub_workspaces_needing_upload:
-                continue
-            sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
-            logging.info(f"Extracting participant IDs from researcher_id_{sub_dataset.researcher_id}_project_id_{sub_dataset.project_id}")
-            sub_participants = csv_transformer.extract_all_participant_ids_from_files(
-                file_contents_map=sub_dataset.file_contents_map
-            )
-
-            unknown_participants = sub_participants - all_main_participants
-            if unknown_participants:
-                for participant_id in sorted(unknown_participants):
-                    logging.error(f"Participant '{participant_id}' in sub workspace '{sub_dataset.workspace_name}' not found in main workspace")
-                    unknown_participant_failures += 1
-            else:
-                sub_workspace_metadata.append(
-                    {
-                        "workspace_name": sub_dataset.workspace_name,
-                        "participants": sub_participants,
-                        "sub_workspace_terra_obj": sub_workspace_terra_obj,
-                    }
-                )
-                logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
-
-    if unknown_participant_failures:
-        raise ValueError(
-            f"{unknown_participant_failures} participant(s) across sub workspaces are not present in the main workspace. "
-            f"See error log entries above for details."
+        sub_workspace_metadata = collect_sub_workspace_metadata(
+            dataset_info=dataset_info,
+            sub_workspaces=sub_workspaces,
+            workspaces_needing_upload=sub_workspaces_needing_upload,
+            csv_transformer=csv_transformer,
+            all_main_participants=all_main_participants,
         )
 
     # Determine which participants to check genomics files for.

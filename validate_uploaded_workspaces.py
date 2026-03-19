@@ -62,8 +62,8 @@ def main() -> None:
         dry_run=False,
     )
 
-    main_workspace = workspace_manager.get_main_workspace() if args.workspace_scope in ("all", "main") else None
-    sub_workspaces = workspace_manager.get_all_sub_workspaces(dataset_info) if args.workspace_scope in ("all", "sub") else {}
+    main_workspace = workspace_manager.get_workspace(workspace_manager.main_workspace_name) if args.workspace_scope in ("all", "main") else None
+    sub_workspaces = workspace_manager.build_sub_workspaces(dataset_info, create=False) if args.workspace_scope in ("all", "sub") else {}
 
     genomics_access_rows = dataset_loader.read_cloud_csv_as_dicts(GENOMICS_FILE_ACCESS_CSV)
     researchers_with_genomics_access = {

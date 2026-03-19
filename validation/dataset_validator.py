@@ -2,6 +2,7 @@
 import logging
 import re
 from pathlib import Path
+from typing import Any, Annotated, Union, get_args, get_origin
 
 from pydantic import ValidationError
 
@@ -12,6 +13,160 @@ from schema_helpers import CsvSchemaHelper
 
 class DatasetValidator:
     """Handles validation of CSV files in main and sub datasets."""
+
+    _CASE_INSENSITIVE_STRING_VALUES = {"true", "false", "yes", "no"}
+
+    @staticmethod
+    def _normalize_string_value(value: str) -> str:
+        """Normalize string values for comparison."""
+        normalized_value = value.strip()
+        if normalized_value.lower() in DatasetValidator._CASE_INSENSITIVE_STRING_VALUES:
+            return normalized_value.lower()
+        return normalized_value
+
+    @staticmethod
+    def _get_field_runtime_type(annotation: Any) -> Any:
+        """Return the concrete runtime type hidden inside Optional[...] or Annotated[...]."""
+        origin = get_origin(annotation)
+        if origin is Annotated:
+            return DatasetValidator._get_field_runtime_type(get_args(annotation)[0])
+        if origin is Union:
+            non_none_types = [arg for arg in get_args(annotation) if arg is not type(None)]
+            if len(non_none_types) == 1:
+                return DatasetValidator._get_field_runtime_type(non_none_types[0])
+        return annotation
+
+    @classmethod
+    def _normalize_value_for_comparison(cls, value: Any, annotation: Any = None) -> Any:
+        """Normalize one scalar value for comparison using the schema field type, defaulting to string."""
+        if value is None:
+            return None
+
+        expected_type = cls._get_field_runtime_type(annotation) if annotation is not None else str
+        coerced_value = cls._coerce_value_to_field_type(value=value, annotation=expected_type)
+
+        if expected_type is str:
+            return cls._normalize_string_value(str(coerced_value))
+        if expected_type is int:
+            return int(coerced_value) if isinstance(coerced_value, int) else cls._normalize_string_value(str(coerced_value))
+        if expected_type is float:
+            return float(coerced_value) if isinstance(coerced_value, (int, float)) else cls._normalize_string_value(str(coerced_value))
+        if expected_type is bool:
+            return bool(coerced_value) if isinstance(coerced_value, bool) else cls._normalize_string_value(str(coerced_value))
+
+        return cls._normalize_string_value(str(coerced_value))
+
+    @classmethod
+    def _coerce_value_to_field_type(cls, value: Any, annotation: Any) -> Any:
+        """Try to coerce a value into the model field's expected simple type."""
+        if value is None:
+            return None
+
+        expected_type = cls._get_field_runtime_type(annotation)
+
+        if expected_type is str:
+            return value if isinstance(value, str) else str(value)
+
+        if expected_type is int:
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value) if value.is_integer() else value
+            if isinstance(value, str):
+                stripped_value = value.strip()
+                if not stripped_value:
+                    return value
+                if re.fullmatch(r"[-+]?\d+", stripped_value):
+                    return int(stripped_value)
+            return value
+
+        if expected_type is float:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                stripped_value = value.strip()
+                if not stripped_value:
+                    return value
+                try:
+                    return float(stripped_value)
+                except ValueError:
+                    return value
+            return value
+
+        if expected_type is bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)) and value in (0, 1):
+                return bool(value)
+            if isinstance(value, str):
+                stripped_value = value.strip().lower()
+                if stripped_value in {"true", "1", "yes"}:
+                    return True
+                if stripped_value in {"false", "0", "no"}:
+                    return False
+            return value
+
+        return value
+
+    @classmethod
+    def coerce_row_values_to_schema_types(cls, row: dict, filename: str) -> dict:
+        """Convert row values toward the types expected by the schema for this CSV file."""
+        model = CsvSchemaHelper.get_model_for_csv_filename(filename)
+        if model is None:
+            return row
+
+        coerced_row = dict(row)
+        for field_name, field_info in model.model_fields.items():
+            if field_name in coerced_row:
+                coerced_row[field_name] = cls._coerce_value_to_field_type(
+                    value=coerced_row[field_name],
+                    annotation=field_info.annotation,
+                )
+        return coerced_row
+
+    @classmethod
+    def _parse_row_with_schema(cls, row: dict, filename: str):
+        """Run one row through the pydantic schema and return the parsed model instance."""
+        model = CsvSchemaHelper.get_model_for_csv_filename(filename)
+        if model is None:
+            return None
+
+        typed_row = cls.coerce_row_values_to_schema_types(row=row, filename=filename)
+        return model(**typed_row)
+
+    @classmethod
+    def build_upload_row(cls, row: dict, filename: str) -> dict:
+        """Validate one source row and return the normalized values that should be uploaded to Terra."""
+        parsed_row = cls._parse_row_with_schema(row=row, filename=filename)
+        if parsed_row is None:
+            return dict(row)
+
+        validated_row = parsed_row.model_dump()
+        return {
+            key: "" if value is None else value
+            for key, value in validated_row.items()
+        }
+
+    @classmethod
+    def build_comparison_row(cls, row: dict, filename: str) -> dict:
+        """Validate one row and normalize it into the canonical form used for row comparisons."""
+        parsed_row = cls._parse_row_with_schema(row=row, filename=filename)
+        model = CsvSchemaHelper.get_model_for_csv_filename(filename)
+        if parsed_row is None or model is None:
+            return {key: cls._normalize_value_for_comparison(value=value) for key, value in row.items()}
+
+        validated_row = parsed_row.model_dump()
+        return {
+            key: cls._normalize_value_for_comparison(
+                value=value,
+                annotation=model.model_fields[key].annotation if key in model.model_fields else None,
+            )
+            for key, value in validated_row.items()
+        }
 
     @staticmethod
     def parse_sub_directory_name(dir_name: str) -> dict:
@@ -74,7 +229,7 @@ class DatasetValidator:
         errors_for_file = []
         for row_num, row in enumerate(rows, start=1):
             try:
-                model(**row)
+                DatasetValidator._parse_row_with_schema(row=row, filename=filename)
             except ValidationError as e:
                 for error in e.errors():
                     field = " -> ".join(str(loc) for loc in error["loc"])

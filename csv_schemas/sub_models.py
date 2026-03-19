@@ -35,7 +35,7 @@ class CsvModel(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def  convert_yes_no_to_bool(cls, data: Any) -> Any:
+    def convert_yes_no_to_bool(cls, data: Any) -> Any:
         """Converts "Yes"/"No" string values to boolean True/False for any fields that are Optional[bool]."""
         for field_name, field_info in cls.model_fields.items():
             # Check if the field is typed as bool (or Optional[bool])
@@ -211,7 +211,7 @@ class FamilyHistoryBiologicalFather(CsvModel):
     """Model for family_history_biological_father.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     was_father_adopted: Optional[str] = None
     was_father_twin_triplet: Optional[str] = None
@@ -230,7 +230,7 @@ class FamilyHistoryBiologicalMother(CsvModel):
     """Model for family_history_biological_mother.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     was_mother_adopted: Optional[bool]
     was_mother_twin_triplet: Optional[bool]
@@ -249,7 +249,7 @@ class FamilyHistoryBiologicalSiblings(CsvModel):
     """Model for family_history_biological_siblings.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     sibling_birth_gender: Optional[str] = None
     was_sibling_twin_triplet: Optional[bool]
@@ -266,7 +266,7 @@ class FamilyHistoryBiologicalSiblingsIntro(CsvModel):
     """Model for family_history_biological_siblings_intro.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     is_patient_twin_triplet: Optional[bool]
     number_of_siblings: Optional[str] = None
@@ -287,7 +287,7 @@ class FamilyHistoryOtherFamilyMembers(CsvModel):
     """Model for family_history_other_family_members.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     maternal_grandmother_diagnosed_cancer: Optional[str] = None
     maternal_grandmother_cancer_diagnosis: Optional[str] = None
@@ -310,7 +310,7 @@ class FamilyHistoryOtherFamilyMembersRelatives(CsvModel):
     """Model for family_history_other_family_members_relatives.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     cancer_diagnosis: Optional[str] = None
     age_first_diagnosis: Optional[str] = None
@@ -323,7 +323,7 @@ class FamilyHistoryYou(CsvModel):
     """Model for family_history_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     received_genetic_counseling: Optional[str] = None
     has_genetic_test: Optional[str] = None
@@ -386,7 +386,7 @@ class PatientProfileCancerInfo(CsvModel):
     """Model for patient_profile_cancer_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     cancer_type: Optional[str] = None
     cancer_subtype: Optional[str] = None
@@ -401,7 +401,7 @@ class PatientProfileContactInfo(CsvModel):
     """Model for patient_profile_contact_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     mailing_country: Optional[str] = None
     mailing_state: Optional[str] = None
@@ -411,7 +411,7 @@ class PatientProfileEligibility(CsvModel):
     """Model for patient_profile_eligibility.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     date_of_birth: OptionalYearInt = None
     year_of_first_breast_cancer_diagnosis: Optional[str] = None
@@ -421,7 +421,7 @@ class PatientProfileMoreAboutYou(CsvModel):
     """Model for patient_profile_more_about_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     gender: Optional[str] = None
     sex_assigned_at_birth: Optional[str] = None
@@ -436,7 +436,7 @@ class PatientProfileProviderInfo(CsvModel):
     """Model for patient_profile_provider_info.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     breast_cancer_care_state: Optional[str] = None
     breast_cancer_care_currently_on_treatment: Optional[str] = None
@@ -450,7 +450,7 @@ class PatientProfileSupplementalAboutYou(CsvModel):
     """Model for patient_profile_supplemental_about_you.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     gender: Optional[str] = None
     sex_assigned_at_birth: Optional[str] = None
@@ -521,7 +521,7 @@ class QualityOfLifeGeneral(CsvModel):
     """Model for quality_of_life_general.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     currently_on_treatment: Optional[str] = None
     overall_quality_of_life_today: Optional[str] = None
@@ -533,7 +533,7 @@ class QualityOfLifeMentalHealth(CsvModel):
     """Model for quality_of_life_mental_health.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     overall_mental_emotional_wellbeing_today: Optional[str] = None
     overall_mental_wellbeing_compared_to_pre_diagnosis: Optional[str] = None
@@ -565,7 +565,7 @@ class QualityOfLifePhysicalAbility(CsvModel):
     """Model for quality_of_life_physical_ability.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     everyday_routine_today: Optional[str] = None
     everyday_routine_compared_to_before: Optional[str] = None
@@ -617,7 +617,7 @@ class QualityOfLifeSocialConnectedness(CsvModel):
     """Model for quality_of_life_social_connectedness.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     connected_to_others: Optional[str] = None
     connected_now_to_before_diagnosis: Optional[str] = None
@@ -639,7 +639,7 @@ class QualityOfLifeSpirituality(CsvModel):
     """Model for quality_of_life_spirituality.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     religious_or_spiritual: Optional[str] = None
     importance_of_spiritual_activities: Optional[str] = None
@@ -687,7 +687,7 @@ class SocialDeterminantSocialAndCommunityContext(CsvModel):
     """Model for social_determinant_social_and_community_context.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     impact_of_support_system_on_decisions: Optional[str] = None
     help_received_with_daily_activities_past_12_months: Optional[str] = None
@@ -707,7 +707,7 @@ class SocialDeterminantsEconomicStability(CsvModel):
     """Model for social_determinants_economic_stability.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     food_impact: Optional[str] = None
     clothing_impact: Optional[str] = None
@@ -735,7 +735,7 @@ class SocialDeterminantsEducationAccessAndQuality(CsvModel):
     """Model for social_determinants_education_access_and_quality.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     highest_level_of_school_completed: Optional[str] = None
     unable_to_finish_school_training: Optional[str] = None
@@ -750,7 +750,7 @@ class SocialDeterminantsHealthCareAccessAndQuality(CsvModel):
     """Model for social_determinants_health_care_access_and_quality.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     past_12_months_access_to_medical_care: Optional[str] = None
     past_12_months_avoided_medical_care: Optional[str] = None
@@ -770,7 +770,7 @@ class SocialDeterminantsNeighborhoodAndBuiltEnvironment(CsvModel):
     """Model for social_determinants_neighborhood_and_built_environment.csv"""
     patient_id: str
     task_id: Optional[str] = None
-    task_version: Optional[str] = None
+    task_version: Optional[float] = None
     patient_task_id: Optional[str] = None
     description_of_general_area_living_today: Optional[str] = None
     childcare_dependent_care: Optional[str] = None

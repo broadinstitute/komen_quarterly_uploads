@@ -11,7 +11,16 @@ from models.data_models import DatasetInfo, SubDatasetInfo
 
 
 class _SubDatasetAccumulator(TypedDict):
+    """Temporary grouping structure used while building sub-dataset models.
+
+    `files` preserves the original list of matched CSV paths for a single
+    `(researcher_id, project_id)` pair, while `file_contents_map` stores the
+    parsed row data for each of those files.
+    """
+
+    # Full GCS paths for all CSV files that belong to one sub-dataset.
     files: list[str]
+    # Parsed CSV rows keyed by the corresponding file path in `files`.
     file_contents_map: dict[str, list[dict[str, str]]]
 
 
@@ -45,6 +54,7 @@ class DatasetLoader:
 
     def parse_csv_paths_to_dataset_info(self, all_csv_paths: list[str]) -> DatasetInfo:
         """Load all CSVs in one batch and organize them into main and sub datasets."""
+        # Dict where key is file name and value is file contents
         all_file_contents = self.gcp.read_files_multithreaded(full_paths=all_csv_paths)
 
         main_files: list[str] = []
@@ -54,11 +64,13 @@ class DatasetLoader:
         for file_path in all_csv_paths:
             file_rows = self.parse_csv_text_to_list_of_dicts(all_file_contents[file_path])
 
+            # Check if it's a main dataset file, which is determined by the presence of MAIN_DATASET_PATTERN in the path.
             if self.MAIN_DATASET_PATTERN.search(file_path):
                 main_files.append(file_path)
                 main_file_contents_map[file_path] = file_rows
                 continue
 
+            # Check if it's a sub-dataset file, which is determined by the presence of SUB_DATASET_PATTERN in path
             sub_match = self.SUB_DATASET_PATTERN.search(file_path)
             if not sub_match:
                 continue
@@ -66,6 +78,7 @@ class DatasetLoader:
             researcher_id = int(sub_match.group(1))
             project_id = int(sub_match.group(2))
             dataset_key = (researcher_id, project_id)
+            # Dataset not already seen — initialize the dict for this dataset
             if dataset_key not in sub_dataset_map:
                 sub_dataset_map[dataset_key] = {"files": [], "file_contents_map": {}}
 

@@ -38,6 +38,16 @@ class WorkspaceManager:
             request_util=self.request_util,
         )
 
+    def _get_sub_workspace_name(self, sub_dataset_info: SubDatasetInfo) -> str:
+        """Build and store the Terra workspace name for one sub dataset."""
+        workspace_name = self.format_workspace_name(
+            project_name=sub_dataset_info.project_name,
+            date_created=sub_dataset_info.date_created,
+            researcher_id=sub_dataset_info.researcher_id,
+        )
+        sub_dataset_info.workspace_name = workspace_name
+        return workspace_name
+
     @staticmethod
     def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
         """
@@ -89,40 +99,21 @@ class WorkspaceManager:
     def get_workspace_table_names(workspace: TerraWorkspace) -> list[str]:
         """Return the set of table names currently present in a workspace."""
         workspace_info = workspace.get_workspace_entity_info().json()
-        print([table for table, attributes in workspace_info.items()])
         return [table for table, attributes in workspace_info.items()]
-
-    @classmethod
-    def get_missing_tables(cls, workspace: TerraWorkspace, expected_tables: list[str]) -> list[str]:
-        """Return the subset of expected tables not currently present in the workspace."""
-        workspace_tables = cls.get_workspace_table_names(workspace)
-        print(f"WOrkspace tables: {workspace_tables}")
-        print(f"Expected tables: {expected_tables}")
-        return [table_name for table_name in expected_tables if table_name not in workspace_tables]
-
-    @classmethod
-    def workspace_has_all_tables(cls, workspace: TerraWorkspace, expected_tables: list[str]) -> bool:
-        """
-        Check whether all expected tables already exist in the workspace.
-
-        Args:
-            workspace: TerraWorkspace object to inspect
-            expected_tables: List of table names that must be present (e.g. ['demographics', 'biomarker'])
-
-        Returns:
-            True if every expected table is present, False otherwise
-        """
-        missing = cls.get_missing_tables(workspace, expected_tables)
-        if missing:
-            logging.info(f"Workspace '{workspace.workspace_name}' is missing {len(missing)} table(s): {missing}")
-            return False
-        logging.info(f"Workspace '{workspace.workspace_name}' already has all expected tables")
-        return True
 
     @staticmethod
     def get_workspace_table_rows(workspace: TerraWorkspace, table_name: str) -> list[dict]:
         """Fetch and normalize all rows for a workspace table."""
-        return workspace.get_gcp_workspace_metrics(entity_type=table_name, remove_dicts=True)
+        table_contents = workspace.get_gcp_workspace_metrics(entity_type=table_name, remove_dicts=True)
+        # Terra returns one dict per entity row with the entity id split from the attributes.
+        # Fold that id back into the row so the validator can treat the data like normal CSV rows.
+        return [
+            {
+                f"{row_dict['entityType']}_id": row_dict['name'],
+                **row_dict['attributes']
+            }
+            for row_dict in table_contents
+        ]
 
     def should_skip_uploads(self, workspace: TerraWorkspace, expected_tables: list[str], force: bool) -> bool:
         """
@@ -144,7 +135,15 @@ class WorkspaceManager:
         if force:
             logging.info(f"--force set: skipping table check for '{workspace.workspace_name}', will upload all tables")
             return False
-        return self.workspace_has_all_tables(workspace, expected_tables)
+
+        existing_tables = self.get_workspace_table_names(workspace)
+        missing_tables = [table_name for table_name in expected_tables if table_name not in existing_tables]
+        if missing_tables:
+            logging.info(f"Workspace '{workspace.workspace_name}' is missing {len(missing_tables)} table(s): {missing_tables}")
+            return False
+
+        logging.info(f"Workspace '{workspace.workspace_name}' already has all expected tables")
+        return True
 
     def create_workspace(self, workspace_name: str) -> TerraWorkspace:
         """
@@ -163,67 +162,16 @@ class WorkspaceManager:
             workspace.create_workspace(continue_if_exists=True)
         return workspace
 
-    def get_sub_workspace(self, sub_dataset_info: SubDatasetInfo) -> TerraWorkspace:
-        """Return a TerraWorkspace object for a sub dataset without creating it."""
-        workspace_name = self.format_workspace_name(
-            project_name=sub_dataset_info.project_name,
-            date_created=sub_dataset_info.date_created,
-            researcher_id=sub_dataset_info.researcher_id,
-        )
-        sub_dataset_info.workspace_name = workspace_name
-        return self.get_workspace(workspace_name)
-
-    def get_main_workspace(self) -> TerraWorkspace:
-        """Return a TerraWorkspace object for the main workspace without creating it."""
-        return self.get_workspace(self.main_workspace_name)
-
-    def create_sub_workspace(self, sub_dataset_info: SubDatasetInfo) -> TerraWorkspace:
-        """
-        Create a sub dataset workspace.
-
-        Args:
-            sub_dataset_info: SubDatasetInfo object with project metadata
-
-        Returns:
-            TerraWorkspace object for sub workspace
-        """
-        sub_workspace = self.get_sub_workspace(sub_dataset_info)
-        if self.dry_run:
-            logging.info(f"DRY RUN: Would create workspace '{sub_workspace.workspace_name}'")
-            return sub_workspace
-        sub_workspace.create_workspace(continue_if_exists=True)
-        return sub_workspace
-
-    def create_main_workspace(self) -> TerraWorkspace:
-        """
-        Create the main Terra workspace, continuing silently if it already exists.
-
-        Returns:
-            TerraWorkspace object for the main workspace
-        """
-        return self.create_workspace(self.main_workspace_name)
-
-    def get_all_sub_workspaces(self, dataset_info: DatasetInfo) -> dict[str, TerraWorkspace]:
-        """Return TerraWorkspace objects for all sub datasets without creating them."""
+    def build_sub_workspaces(self, dataset_info: DatasetInfo, create: bool = False) -> dict[str, TerraWorkspace]:
+        """Build Terra workspace objects for all sub datasets and optionally create them."""
         workspaces = {}
         for sub_dir_info in dataset_info.sub_datasets:
-            sub_workspace = self.get_sub_workspace(sub_dir_info)
+            sub_workspace = self.get_workspace(self._get_sub_workspace_name(sub_dir_info))
+            if create and not self.dry_run:
+                sub_workspace.create_workspace(continue_if_exists=True)
+            elif create:
+                logging.info(f"DRY RUN: Would create workspace '{sub_workspace.workspace_name}'")
             workspaces[sub_workspace.workspace_name] = sub_workspace
-        return workspaces
-
-    def create_all_sub_workspaces(self, dataset_info: DatasetInfo) -> dict[str, TerraWorkspace]:
-        """
-        Create Terra workspaces for all sub datasets.
-
-        Args:
-            dataset_info: Object containing SFTP dataset information
-
-        Returns:
-            Dict mapping workspace names to sub TerraWorkspace objects
-        """
-        workspaces = {}
-        for sub_dir_info in dataset_info.sub_datasets:
-            sub_workspace = self.create_sub_workspace(sub_dir_info)
-            workspaces[sub_workspace.workspace_name] = sub_workspace
-        logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
+        if create:
+            logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
         return workspaces

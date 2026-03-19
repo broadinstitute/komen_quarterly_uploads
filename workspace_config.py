@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 MAIN_WORKSPACE_PREFIX = "ShareForCures-Dataset"
-BILLING_PROJECT = "SFC-Research"
+BILLING_PROJECT = "ops-integration-billing" #TODO: Switch back to SFC-Research
 METADATA_CSVS_BUCKET = "fc-fa9fd891-996a-4624-864e-c4f81d165a90"
 
 # Files are in workspace: SFC-Research/ShareForCures Genomics Files

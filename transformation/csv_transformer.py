@@ -5,11 +5,26 @@ import csv
 from typing import Any, Optional
 from pathlib import Path
 
-from ops_utils.csv_util import Csv
+from schema_helpers import CsvSchemaHelper
+from validation.dataset_validator import DatasetValidator
 
 
 class CSVTransformer:
     """Handles CSV transformations and adjustments before upload."""
+
+    @staticmethod
+    def _write_tsv_rows(output_path: str, fieldnames: list[str], rows: list[dict]) -> None:
+        """Write TSV rows, quoting string values so Terra keeps text fields as text."""
+        with open(output_path, "w", encoding="utf-8", newline="") as outfile:
+            writer = csv.DictWriter(
+                outfile,
+                fieldnames=fieldnames,
+                delimiter='\t',
+                quoting=csv.QUOTE_NONNUMERIC,
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
 
     @staticmethod
     def get_entity_column_name(csv_filename: str) -> str:
@@ -26,32 +41,27 @@ class CSVTransformer:
         table_name = csv_filename.replace('.csv', '')
         return f"entity:{table_name}_table_id"
 
-    def add_entity_id_column(self, csv_path: str, output_path: str, file_contents: list[dict]) -> None:
-        """
-        Add entity ID column to CSV file.
-
-        The entity column will be named 'entity:{table_name}_id' and will contain
-        row numbers starting from 1.
-
-        Args:
-            csv_path: Path to input CSV file
-            output_path: Path to output CSV file with entity ID column
-            file_contents: List of dictionaries containing all file contents for the CSV (used to determine headers and row count)
-
-        Returns:
-            True if successful, False otherwise
-        """
+    def write_tsv_with_entity_id_column(self, csv_path: str, output_path: str, file_contents: list[dict]) -> None:
+        """Write a Terra-ready TSV from schema-normalized rows with the Terra entity id column."""
         csv_filename = Path(csv_path).name
         entity_col_name = self.get_entity_column_name(csv_filename)
+        # Uploads should use the model-normalized values rather than the raw CSV text.
+        # That keeps booleans / years / task_version aligned with the schema we validated against.
+        normalized_rows = [
+            DatasetValidator.build_upload_row(row=row, filename=csv_filename)
+            for row in file_contents
+        ]
 
-        fieldnames = [entity_col_name] + [header for header in file_contents[0].keys()]
-        with open(output_path, "w", encoding="utf-8", newline="") as outfile:
-            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
-            writer.writeheader()
+        data_fieldnames = CsvSchemaHelper.get_expected_headers_for_csv_filename(csv_filename)
+        if not data_fieldnames and normalized_rows:
+            data_fieldnames = list(normalized_rows[0].keys())
 
-            for row_num, row in enumerate(file_contents, start=1):
-                row[entity_col_name] = str(row_num)
-                writer.writerow(row)
+        fieldnames = [entity_col_name] + data_fieldnames
+        rows_to_write = [
+            {entity_col_name: str(row_num), **row}
+            for row_num, row in enumerate(normalized_rows, start=1)
+        ]
+        self._write_tsv_rows(output_path=output_path, fieldnames=fieldnames, rows=rows_to_write)
 
     @staticmethod
     def extract_all_participant_ids_from_files(
@@ -80,34 +90,6 @@ class CSVTransformer:
         logging.info(f"Extracted {len(all_participant_ids)} unique participant IDs from {len(file_contents_map)} files")
         return all_participant_ids
 
-    @staticmethod
-    def convert_csv_to_tsv(csv_path: str, output_path: str) -> None:
-        """
-        Convert CSV file to TSV format.
-
-        Args:
-            csv_path: Path to input CSV file
-            output_path: Path to output TSV file
-
-        Returns:
-            True if successful
-        """
-        # Read CSV as list of dicts with comma delimiter
-        csv_data = Csv(file_path=csv_path, delimiter=',').create_list_of_dicts_from_tsv()
-
-        # Get headers from the first row or empty list
-        header_list = []
-        if csv_data:
-            header_list = list(csv_data[0].keys())
-        else:
-            csv_data = []
-
-        # Write as TSV with tab delimiter
-        Csv(file_path=output_path, delimiter='\t', verbose=False).create_tsv_from_list_of_dicts(
-            list_of_dicts=csv_data,
-            header_list=header_list
-        )
-
     def transform_and_convert_csv(self, csv_path: str, file_contents: list[dict], output_dir: str) -> str:
         """
         Transform CSV (add entity ID) and convert to TSV for Terra upload.
@@ -115,24 +97,21 @@ class CSVTransformer:
         Args:
             csv_path: Path to input CSV file
             output_dir: Directory to write output TSV
-            file_contents: List of dictionaries containing all file contents for the CSV
+            file_contents: Already-loaded CSV rows. These stay in memory the whole time, so there is no
+                           second parse step that could reinterpret values like "1.0" as a number.
 
         Returns:
             Path to output TSV file, or None if failed
         """
         csv_filename = Path(csv_path).name
-        temp_csv_path = Path(output_dir) / f"temp_{csv_filename}"
         tsv_filename = csv_filename.replace(".csv", ".tsv")
         output_tsv_path = Path(output_dir) / tsv_filename
 
-        # Add entity ID column
-        self.add_entity_id_column(csv_path=csv_path, output_path=str(temp_csv_path), file_contents=file_contents)
-
-        # Convert to TSV
-        self.convert_csv_to_tsv(csv_path=str(temp_csv_path), output_path=str(output_tsv_path))
-
-        # Clean up temp file
-        temp_csv_path.unlink()
+        self.write_tsv_with_entity_id_column(
+            csv_path=csv_path,
+            output_path=str(output_tsv_path),
+            file_contents=file_contents,
+        )
         return str(output_tsv_path)
 
     @staticmethod
@@ -176,10 +155,7 @@ class CSVTransformer:
                 row_data[file_type] = files.get(file_type) or "NA"
             sequencing_data.append(row_data)
 
-        Csv(file_path=output_path, delimiter='\t', verbose=False).create_tsv_from_list_of_dicts(
-            list_of_dicts=sequencing_data,
-            header_list=header_list
-        )
+        CSVTransformer._write_tsv_rows(output_path=output_path, fieldnames=header_list, rows=sequencing_data)
 
         logging.info(f"Created sequencing files TSV with {len(sequencing_data)} participants: {output_path}")
         return output_path
