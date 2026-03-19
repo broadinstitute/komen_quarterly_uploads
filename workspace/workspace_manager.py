@@ -8,6 +8,10 @@ from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
 from models.data_models import DatasetInfo, SubDatasetInfo
+from transformation.column_order import TABLE_COLUMN_ORDER
+
+
+_METADATA_TABLE_PATTERN = re.compile(r"^researcher_id_\d+_project_id_\d+_metadata_table$")
 
 
 class WorkspaceManager:
@@ -76,6 +80,46 @@ class WorkspaceManager:
             }
         ])
         logging.info(f"Set description on workspace '{workspace.workspace_name}'")
+
+    @staticmethod
+    def _set_column_order_for_uploaded_tables(workspace: TerraWorkspace, table_names: list[str]) -> None:
+        """Set the Terra column order for all uploaded tables in a single call."""
+        column_order_dict = {}
+        for table_name in table_names:
+            stem = table_name.removesuffix("_table")
+            if stem in TABLE_COLUMN_ORDER:
+                column_order_dict[table_name] = TABLE_COLUMN_ORDER[stem]
+            elif _METADATA_TABLE_PATTERN.match(table_name):
+                column_order_dict[table_name] = TABLE_COLUMN_ORDER["researcher_project_metadata"]
+            else:
+                logging.warning(
+                    f"No column order defined for table '{table_name}' — skipping column order for this table"
+                )
+
+        if column_order_dict:
+            logging.info(
+                f"Setting column order for {len(column_order_dict)} table(s) in workspace '{workspace.workspace_name}'"
+            )
+            workspace.set_table_column_order(column_order=column_order_dict)
+
+    def upload_table_data_to_workspace(
+        self,
+        workspace: TerraWorkspace,
+        table_data: dict[str, dict[str, object]],
+    ) -> bool:
+        """Upload all table data to a workspace with a single batch upsert call."""
+        if self.dry_run:
+            logging.info(
+                f"DRY RUN: Would upload {len(table_data)} table(s) to workspace '{workspace.workspace_name}'"
+            )
+            return True
+
+        logging.info(
+            f"Uploading {len(table_data)} table(s) to workspace '{workspace.workspace_name}' with batch upsert"
+        )
+        workspace.upload_metadata_with_batch_upsert(table_data=table_data)
+        self._set_column_order_for_uploaded_tables(workspace, list(table_data.keys()))
+        return True
 
     @staticmethod
     def workspace_has_all_tables(workspace: TerraWorkspace, expected_tables: list[str]) -> bool:

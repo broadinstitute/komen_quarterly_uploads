@@ -23,7 +23,7 @@ from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
-from transformation.terra_uploader import TerraUploader
+from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
 from transformation.genomics_file_checker import GenomicsFileChecker
 
 
@@ -89,7 +89,6 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict:
 def process_main_workspace(
     dataset_info: DatasetInfo,
     terra_workspace_obj: TerraWorkspace,
-    terra_uploader: TerraUploader,
     workspace_manager: WorkspaceManager,
     participant_files: dict[str, dict[str, Optional[str]]],
     dataset_notes: Optional[str] = None,
@@ -104,7 +103,6 @@ def process_main_workspace(
     Args:
         dataset_info: Dataset information
         terra_workspace_obj: TerraWorkspace object for the main workspace
-        terra_uploader: Terra uploader instance
         workspace_manager: WorkspaceManager instance used for setting description and column order
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
@@ -118,14 +116,14 @@ def process_main_workspace(
     for csv_file_path in dataset_info.main_dataset_files:
         file_contents = dataset_info.main_file_contents_map[csv_file_path]
         table_data.update(
-            terra_uploader.convert_csv_rows_to_table_data(
+            convert_csv_rows_to_table_data(
                 csv_path=csv_file_path,
                 file_contents=file_contents,
             )
         )
 
     table_data.update(
-        terra_uploader.create_sequencing_files_table_data(
+        create_sequencing_files_table_data(
             participant_files=participant_files,
         )
     )
@@ -135,13 +133,12 @@ def process_main_workspace(
             f"DRY RUN: Would upload {len(table_data)} table(s) to main workspace '{terra_workspace_obj.workspace_name}'"
         )
     else:
-        terra_uploader.upload_table_data_to_workspace(terra_workspace_obj, table_data)
+        workspace_manager.upload_table_data_to_workspace(terra_workspace_obj, table_data)
         logging.info(f"Completed upload to main workspace: {len(table_data)} tables")
 
 def process_sub_workspaces(
     dataset_info: DatasetInfo,
     sub_workspace_metadata: list[dict],
-    terra_uploader: TerraUploader,
     workspace_manager_obj: WorkspaceManager,
     all_participant_files: dict,
     genomics_access_metadata: list[dict],
@@ -160,7 +157,6 @@ def process_sub_workspaces(
     Args:
         dataset_info: Dataset information
         sub_workspace_metadata: List of dictionaries with sub workspace name, participant set, and TerraWorkspace object
-        terra_uploader: Terra uploader instance
         workspace_manager_obj: WorkspaceManager instance
         all_participant_files: Full dict of participant_id -> {file_type: path_or_None}
                                as returned by GenomicsFileChecker.check_all_participants().
@@ -204,7 +200,7 @@ def process_sub_workspaces(
             if Path(csv_file_path).name not in MAIN_ONLY_CSVS:
                 file_contents = sub_dataset.file_contents_map[csv_file_path]
                 table_data.update(
-                    terra_uploader.convert_csv_rows_to_table_data(
+                    convert_csv_rows_to_table_data(
                         csv_path=csv_file_path,
                         file_contents=file_contents,
                     )
@@ -214,7 +210,7 @@ def process_sub_workspaces(
             logging.info("Researcher has genomics access - building sequencing files table data for sub workspace")
             participant_files = {p: all_participant_files[p] for p in ws_meta["participants"] if p in all_participant_files}
             table_data.update(
-                terra_uploader.create_sequencing_files_table_data(
+                create_sequencing_files_table_data(
                     participant_files=participant_files,
                 )
             )
@@ -225,7 +221,7 @@ def process_sub_workspaces(
                 f"DRY RUN: Would upload {len(table_data)} table(s) to sub workspace '{sub_dataset.workspace_name}'"
             )
         else:
-            terra_uploader.upload_table_data_to_workspace(sub_workspace_terra_obj, table_data)
+            workspace_manager_obj.upload_table_data_to_workspace(sub_workspace_terra_obj, table_data)
             logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(table_data)} tables")
 
         researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
@@ -348,7 +344,6 @@ def add_researchers_with_genomics_access_to_group(file_access_contents: list[dic
             logging.info(f"User '{email}' already has access to genomics files group '{GENOMICS_FILE_ACCESS_GROUP_NAME}' — skipping")
 
 
-@staticmethod
 def extract_all_participant_ids_from_files(
     file_contents_map: dict[str, list[dict[str, Any]]],
     patient_id_column: str = "patient_id"
@@ -403,8 +398,6 @@ def main():
     validator = DatasetValidator()
     token = Token()
     request_util = RunRequest(token=token)
-    # Initialize uploader
-    terra_uploader = TerraUploader(request_util=request_util)
 
     # Validate all datasets
     if not validator.validate_all(dataset_info):
@@ -556,7 +549,6 @@ def main():
         process_main_workspace(
             dataset_info=dataset_info,
             terra_workspace_obj=main_workspace_terra_obj,
-            terra_uploader=terra_uploader,
             workspace_manager=workspace_manager,
             participant_files=all_participant_files,
             dataset_notes=dataset_notes,
@@ -568,7 +560,6 @@ def main():
         sub_mapping_failures = process_sub_workspaces(
             dataset_info=dataset_info,
             sub_workspace_metadata=sub_workspace_metadata,
-            terra_uploader=terra_uploader,
             workspace_manager_obj=workspace_manager,
             all_participant_files=all_participant_files,
             genomics_access_metadata=genomics_access_contents,

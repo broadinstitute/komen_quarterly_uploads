@@ -428,7 +428,7 @@ TABLE_COLUMN_ORDER: dict[str, dict[str, list[str]]] = {
         ],
     },
     # Sub-dataset project metadata — dynamic table name (researcher_id_*_project_id_*_metadata).
-    # TerraUploader matches the pattern and maps it to this entry at upload time.
+    # Workspace upload logic matches the pattern and maps it to this entry at upload time.
     "researcher_project_metadata": {
         "shown": [
             "researcher_id", "project_id", "project_name", "date_created",
