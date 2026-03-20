@@ -19,16 +19,6 @@ _METADATA_FILE_PATTERN = re.compile(r"researcher_id_\d+_project_id_\d+_metadata\
 def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
     """
     Derive the Terra workspace name for a sub dataset.
-
-    Format: ``{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}``
-
-    Args:
-        project_name:  Human-readable project name from the metadata CSV.
-        date_created:  ISO-style date string (e.g. "2026-02-01") from the metadata CSV.
-        researcher_id: Numeric researcher ID parsed from the directory name.
-
-    Returns:
-        Formatted workspace name string with special characters replaced by underscores.
     """
     if '-' in date_created:
         parts = date_created.split('-')
@@ -52,17 +42,6 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
     Separates files into the main dataset (under shareforcures_dataset_*/) and
     sub datasets (under researcher_id_*_project_id_*/).
     Read all file contents in a single multithreaded call then organize them.
-
-    Args:
-        all_csv_paths: List of full GCS file paths to CSV files
-        gcp: Shared GCPCloudFunctions instance
-
-    Returns:
-        DatasetInfo object with files organized by dataset type and their contents
-
-    Example paths:
-        - Main: "example_main_dir/shareforcures_dataset_2026_02/file.csv"
-        - Sub: "example_main_dir/researcher_id_62_project_id_115/file.csv"
     """
     # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
     main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
@@ -142,7 +121,6 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
     )
 
 def list_bucket_path_and_parse_dataset_info(bucket: str, gcp: GCPCloudFunctions) -> DatasetInfo:
-
     blob_metadata = gcp.list_bucket_contents(bucket_name=bucket, file_extensions_to_include=[".csv"], file_name_only=True)
     all_csv_paths = [a["path"] for a in blob_metadata]
     dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths, gcp)
@@ -158,14 +136,6 @@ def extract_all_participant_ids_from_files(
 
     Iterates over every row in every file and collects non-empty values from
     patient_id_column. Files that do not contain the column are silently skipped.
-
-    Args:
-        file_contents_map: Dict mapping full file paths -> list of row dicts (as returned
-                           by csv.DictReader).
-        patient_id_column: Name of the column that holds participant IDs (default: 'patient_id').
-
-    Returns:
-        Set of all unique, non-empty participant ID strings found across all files.
     """
     all_participant_ids: set[str] = set()
 
@@ -187,13 +157,6 @@ def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> l
     Read a single CSV file from a GCS path and return its rows as a list of dicts.
 
     Strips a UTF-8 BOM if present so that header names match schema field names exactly.
-
-    Args:
-        cloud_path: Full GCS path to the CSV file (e.g. gs://bucket/path/file.csv).
-        gcp:        Shared GCPCloudFunctions instance used for the read.
-
-    Returns:
-        List of row dictionaries as produced by csv.DictReader.
     """
     file_contents = gcp.read_file(cloud_path=cloud_path)
     # Strip UTF-8 BOM and parse into row dicts
@@ -207,14 +170,8 @@ def get_expected_main_table_names(main_dataset_files: list[str]) -> list[str]:
     Compute the expected Terra table names for the main workspace.
 
     Every main CSV file produces one table named ``{stem}_table``.
-    sequencing_files_table is always appended because the main workspace
+    The sequencing_files_table is always appended because the main workspace
     always receives genomics file data.
-
-    Args:
-        main_dataset_files: List of full file paths to the main dataset CSV files.
-
-    Returns:
-        List of expected table name strings.
     """
     # Each CSV file maps to a table named after its stem (e.g. demographics.csv → demographics_table)
     tables = [f"{Path(f).stem}_table" for f in main_dataset_files]
@@ -227,22 +184,9 @@ def get_expected_sub_table_names(sub_files: list[str], has_genomics_access: bool
     """
     Compute the expected Terra table names for a sub workspace.
 
-    Files listed in MAIN_ONLY_CSVS (e.g. patient_enrollment_status.csv,
-    patient_id_map.csv) exist in sub directories but are only uploaded to the
-    main workspace, so they are excluded here.
-
-    sequencing_files_table is included only when the researcher has been granted
+    The sequencing_files_table is included only when the researcher has been granted
     genomics file access.
-
-    Args:
-        sub_files:           List of full file paths belonging to the sub dataset.
-        has_genomics_access: True if the researcher has clearance for genomics file access.
-
-    Returns:
-        List of expected table name strings.
     """
-    # Exclude MAIN_ONLY_CSVS — those files exist in sub directories but are
-    # only uploaded to the main workspace, not to sub workspaces.
     tables = [
         f"{Path(f).stem}_table"
         for f in sub_files
@@ -261,12 +205,6 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict[str, str]
 
     The mapping file contains columns 'Participant ID' and 'Sample ID'.
     Each sample ID is prefixed with 'K' to match the format used in the genomics bucket.
-
-    Args:
-        gcp: Shared GCPCloudFunctions instance used for the read.
-
-    Returns:
-        Dict mapping participant_id -> sample_id (e.g. {"P001": "K100"}).
     """
     mapping_file_contents = gcp.read_file(cloud_path=PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH)
     reader = csv.DictReader(StringIO(mapping_file_contents.lstrip("\ufeff")))
@@ -277,4 +215,3 @@ def load_participant_to_sample_mapping(gcp: GCPCloudFunctions) -> dict[str, str]
     }
     logging.info(f"Loaded participant to sample mapping for {len(mapping_dict)} participants")
     return mapping_dict
-

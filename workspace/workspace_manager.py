@@ -18,7 +18,7 @@ class WorkspaceManager:
     """Manages Terra workspace creation and data upload operations."""
 
     def __init__(
-            self, request_util: RunRequest, billing_project: str, main_workspace_name: str, dry_run: bool = False
+            self, request_util: RunRequest, billing_project: str, dry_run: bool = False
     ):
         """
         Initialize WorkspaceManager.
@@ -26,12 +26,10 @@ class WorkspaceManager:
         Args:
             request_util: Request utility for Terra API calls
             billing_project: Terra billing project name
-            main_workspace_name: Main workspace name
             dry_run: If True, log workspace creation instead of actually creating workspaces
         """
         self.request_util = request_util
         self.billing_project = billing_project
-        self.main_workspace_name = main_workspace_name
         self.dry_run = dry_run
 
     def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
@@ -103,17 +101,6 @@ class WorkspaceManager:
         """
         Check whether all expected tables exist in the workspace, and optionally
         that no unexpected extra tables are present.
-
-        Args:
-            workspace:       TerraWorkspace object to inspect.
-            expected_tables: List of table names that must be present
-                             (e.g. ['demographics_table', 'biomarker_table']).
-            check_no_extra:  When True, also fail if the workspace contains tables
-                             that are not in expected_tables. Defaults to False so
-                             existing callers (upload skip-check) are unaffected.
-
-        Returns:
-            True if validation passes, False otherwise.
         """
         # Fetch the current set of tables from the Terra workspace
         workspace_info = workspace.get_workspace_entity_info().json()
@@ -203,30 +190,6 @@ class WorkspaceManager:
             workspace.create_workspace(continue_if_exists=True)
         return workspace
 
-    def create_sub_workspace(self, sub_dataset_info: SubDatasetInfo) -> TerraWorkspace:
-        """
-        Create a sub dataset workspace.
-
-        workspace_name is pre-populated on SubDatasetInfo by parse_csv_paths_to_dataset_info
-        at load time, so it is used directly here without recomputation.
-
-        Args:
-            sub_dataset_info: SubDatasetInfo object with project metadata
-
-        Returns:
-            TerraWorkspace object for sub workspace
-        """
-        return self.create_workspace(sub_dataset_info.workspace_name)
-
-    def create_main_workspace(self) -> TerraWorkspace:
-        """
-        Create the main Terra workspace, continuing silently if it already exists.
-
-        Returns:
-            TerraWorkspace object for the main workspace
-        """
-        return self.create_workspace(self.main_workspace_name)
-
     def create_all_sub_workspaces(self, dataset_info: DatasetInfo) -> dict[str, TerraWorkspace]:
         """
         Create Terra workspaces for all sub datasets.
@@ -239,7 +202,7 @@ class WorkspaceManager:
         """
         workspaces = {}
         for sub_dir_info in dataset_info.sub_datasets:
-            sub_workspace = self.create_sub_workspace(sub_dir_info)
+            sub_workspace = self.create_workspace(sub_dir_info.workspace_name)
             workspaces[sub_workspace.workspace_name] = sub_workspace
         logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
         return workspaces

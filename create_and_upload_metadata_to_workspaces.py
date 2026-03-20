@@ -284,14 +284,13 @@ def main():
     workspace_manager = WorkspaceManager(
         request_util=request_util,
         billing_project=BILLING_PROJECT,
-        main_workspace_name=MAIN_WORKSPACE_NAME,
         dry_run=dry_run,
     )
 
     # Create the main workspace
     main_workspace_terra_obj = None
     if workspace_scope in ("all", "main"):
-        main_workspace_terra_obj = workspace_manager.create_main_workspace()
+        main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=MAIN_WORKSPACE_NAME)
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}

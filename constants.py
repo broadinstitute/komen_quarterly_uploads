@@ -3,10 +3,12 @@ from datetime import datetime
 MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}"
 
 SUB_WORKSPACE_NAME_TEMPLATE = "{project_name}_{year}_{month}"
+
 # TODO CHANGE BACK - FOR TESTING ONLY
 BILLING_PROJECT = "ops-integration-billing"
 #BILLING_PROJECT = "SFC-Research"
-# This is our bucket, will need to be changed when Komen gives us their bucket where files are saved
+
+# TODO: This is our test bucket, will need to be changed when Komen gives us their bucket where files are saved
 METADATA_CSVS_BUCKET = "fc-fa9fd891-996a-4624-864e-c4f81d165a90"
 
 # Genomics Files Configuration
