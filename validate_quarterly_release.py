@@ -60,7 +60,7 @@ class ParticipantPostValidation:
         2. All participants (scoped by workspace_scope) are "active" and "enrolled"
            according to patient_enrollment_status.csv.
 
-    If any check fails, subsequent checks are skipped and run() returns False,
+    If any check fails, later checks are skipped and run() returns False,
     preventing misleading results from downstream validations.
     """
 
@@ -73,12 +73,6 @@ class ParticipantPostValidation:
     EXPECTED_ENROLLMENT_STATUS = "enrolled"
 
     def __init__(self, dataset_info: DatasetInfo, workspace_scope: str) -> None:
-        """
-        Args:
-            dataset_info:     Parsed dataset containing main and sub dataset files/contents.
-            workspace_scope:  Controls which workspaces are validated.
-                              One of "all", "main", or "sub".
-        """
         self.dataset_info = dataset_info
         self.workspace_scope = workspace_scope
 
@@ -89,16 +83,11 @@ class ParticipantPostValidation:
 
         The file headers are: patient_id, role_user_status, step.
         All string values are lowercased so comparisons are case-insensitive.
-        The first occurrence of each patient_id wins (main dataset is checked first).
 
-        Returns:
-            Dict keyed by patient_id:
-                {"role_user_status": str, "step": str}
-            Returns an empty dict if no enrollment file is found anywhere.
         """
         enrollment_map: dict[str, dict[str, str]] = {}
 
-        # Search main dataset first, then each sub dataset in order
+        # Search the main dataset first, then each sub dataset in order
         sources = [self.dataset_info.main_file_contents_map] + [
             sd.file_contents_map for sd in self.dataset_info.sub_datasets
         ]
@@ -108,7 +97,7 @@ class ParticipantPostValidation:
                 if Path(file_path).name == self.ENROLLMENT_STATUS_FILE:
                     for row in rows:
                         patient_id = row.get("patient_id", "").strip()
-                        # First occurrence for each patient_id is authoritative
+                        # The first occurrence for each patient_id is authoritative
                         if patient_id and patient_id not in enrollment_map:
                             enrollment_map[patient_id] = {
                                 "role_user_status": row.get("role_user_status", "").strip().lower(),
@@ -125,7 +114,7 @@ class ParticipantPostValidation:
         self,
         participant_ids: set[str],
         enrollment_map: dict[str, dict[str, str]],
-        context: str = "",
+        context: str,
     ) -> bool:
         """
         Verify that every participant ID in participant_ids is active and enrolled.
@@ -135,22 +124,14 @@ class ParticipantPostValidation:
           - Their role_user_status != EXPECTED_STATUS, OR
           - Their step != EXPECTED_STEP
 
-        Args:
-            participant_ids: Set of participant IDs to validate.
-            enrollment_map:  Mapping built by _build_enrollment_status_map().
-            context:         Label included in log messages (e.g. "Main" or workspace name).
-
-        Returns:
-            True if every participant passes; False otherwise.
         """
-        prefix = f"[{context}] " if context else ""
         failed: list[str] = []
 
         for participant_id in sorted(participant_ids):
             if participant_id not in enrollment_map:
                 # Participant present in a CSV but missing from the enrollment file entirely
                 logging.error(
-                    f"{prefix}Participant '{participant_id}' not found in "
+                    f"{context}Participant '{participant_id}' not found in "
                     f"'{self.ENROLLMENT_STATUS_FILE}'"
                 )
                 failed.append(participant_id)
@@ -165,18 +146,18 @@ class ParticipantPostValidation:
 
             if role_status != self.EXPECTED_STATUS or enrollment_status != self.EXPECTED_ENROLLMENT_STATUS:
                 logging.error(
-                    f"{prefix}Participant '{participant_id}' has unexpected enrollment status — "
+                    f"{context}Participant '{participant_id}' has unexpected enrollment status — "
                     f"role_user_status='{role_status}' (expected '{self.EXPECTED_STATUS}'), "
                     f"step='{enrollment_status}' (expected '{self.EXPECTED_ENROLLMENT_STATUS}')"
                 )
                 failed.append(participant_id)
 
         if failed:
-            logging.error(f"{prefix}{len(failed)} participant(s) failed enrollment validation")
+            logging.error(f"{context}{len(failed)} participant(s) failed enrollment validation")
             return False
 
         logging.info(
-            f"{prefix}All {len(participant_ids)} participant(s) are "
+            f"{context}All {len(participant_ids)} participant(s) are "
             f"'{self.EXPECTED_STATUS}' and '{self.EXPECTED_ENROLLMENT_STATUS}'"
         )
         return True
@@ -185,15 +166,6 @@ class ParticipantPostValidation:
         """
         Confirm that every participant ID found in a sub dataset's files is also
         present in the main dataset.
-
-        This is a prerequisite check — if sub participants are unknown to main,
-        enrollment validation results would be misleading.
-
-        Args:
-            main_participants: Set of all participant IDs extracted from the main dataset.
-
-        Returns:
-            True if all sub participants are present in main; False if any are missing.
         """
         all_valid = True
 
@@ -224,80 +196,44 @@ class ParticipantPostValidation:
         Execute all post-validation checks in sequence.
 
         Checks stop on the first failure to avoid surfacing misleading downstream
-        errors. Each failure logs a clear message indicating that subsequent checks
-        (e.g. contents match verification) were not performed.
-
-        Returns:
-            True if all applicable checks pass; False otherwise.
         """
-        logging.info(
-            f"Starting post-validation (workspace_scope='{self.workspace_scope}')"
-        )
+        logging.info(f"Starting post-validation (workspace_scope='{self.workspace_scope}')")
 
-        # Step 1: Extract all unique participant IDs from the main dataset.
-        # Even when scope is "sub", we need the main set as a reference for the
-        # sub-in-main membership check.
+        # Extract all unique participant IDs from the main dataset.
         main_participants = extract_all_participant_ids_from_files(
             self.dataset_info.main_file_contents_map
         )
-        logging.info(
-            f"Extracted {len(main_participants)} unique participant(s) from main dataset"
-        )
+        logging.info(f"Extracted {len(main_participants)} unique participant(s) from main dataset")
 
-        # Step 2: Verify that every sub workspace participant exists in the main dataset.
-        # Failing here means sub workspace data references participants that main doesn't
-        # know about, so we stop before checking enrollment status.
+        # Verify that every sub workspace participant exists in the main dataset.
         if self.workspace_scope in ("all", "sub"):
-            logging.info(
-                "Checking that all sub workspace participants are present in the main dataset..."
-            )
+            logging.info("Checking that all sub workspace participants are present in the main dataset")
             if not self._validate_sub_participants_in_main(main_participants):
-                logging.error(
-                    "Sub workspace participant check failed — "
-                    "skipping enrollment status check (contents match not performed)"
-                )
+                logging.error("Sub workspace participant check failed — skipping enrollment status check (contents match not performed)")
                 return False
 
-        # Step 3: Build the enrollment status map once; reused for all subsequent checks.
+        # Build the enrollment status map once; reused for all later checks.
         enrollment_map = self._build_enrollment_status_map()
         if not enrollment_map:
-            logging.error(
-                f"No enrollment data found in '{self.ENROLLMENT_STATUS_FILE}' — "
-                "cannot validate participant status"
-            )
+            logging.error(f"No enrollment data found in '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
             return False
 
-        # Step 4: Validate that all main dataset participants are active and enrolled.
+        # Validate that all main dataset participants are active and enrolled.
         if self.workspace_scope in ("all", "main"):
-            logging.info("Validating enrollment status for main dataset participants...")
-            if not self._validate_participants_active_and_enrolled(
-                main_participants, enrollment_map, context="Main"
-            ):
-                logging.error(
-                    "Main dataset enrollment validation failed — "
-                    "contents match check not performed"
-                )
+            logging.info("Validating enrollment status for main dataset participants")
+            if not self._validate_participants_active_and_enrolled(main_participants, enrollment_map, context="Main"):
+                logging.error("Main dataset enrollment validation failed — contents match check not performed")
                 return False
 
-        # Step 5: Validate that each sub dataset's participants are active and enrolled.
+        # Validate that each sub dataset's participants are active and enrolled.
         if self.workspace_scope in ("all", "sub"):
             for sub_dataset in self.dataset_info.sub_datasets:
                 # Use workspace_name if available; fall back to researcher/project IDs
                 context = sub_dataset.workspace_name
-                sub_participants = extract_all_participant_ids_from_files(
-                    sub_dataset.file_contents_map
-                )
-                logging.info(
-                    f"Validating enrollment status for sub workspace '{context}' "
-                    f"({len(sub_participants)} participant(s))..."
-                )
-                if not self._validate_participants_active_and_enrolled(
-                    sub_participants, enrollment_map, context=context
-                ):
-                    logging.error(
-                        f"Enrollment validation failed for sub workspace '{context}' — "
-                        "contents match check not performed"
-                    )
+                sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
+                logging.info(f"Validating enrollment status for sub workspace '{context}' ({len(sub_participants)} participant(s))")
+                if not self._validate_participants_active_and_enrolled(sub_participants, enrollment_map, context=context):
+                    logging.error(f"Enrollment validation failed for sub workspace '{context}' — contents match check not performed")
                     return False
 
         logging.info("All post-validation checks passed successfully")
@@ -307,64 +243,35 @@ class ParticipantPostValidation:
 class TerraTablePostValidation:
     """
     Validates that each Terra workspace contains exactly the expected set of tables
-    and that the contents of sequencing_files_table match what was uploaded.
-
-    The expected tables and sequencing rows are derived from the dataset CSV files
-    and a live genomics file check, mirroring exactly what the upload script produces.
-
-    Checks performed (in order):
-        1. Build expected table data from CSV files (convert_csv_rows_to_table_data) and
-           expected sequencing rows from a live GenomicsFileChecker run.
-        2. Verify no expected tables are missing and no extra tables are present.
-        3. Compare sequencing_files_table row contents against what is in Terra.
-
-    Validation stops on the first failure, so root-cause issues can be addressed first.
+    and that the contents of all tables what was uploaded.
     """
 
     def __init__(
-        self,
-        dataset_info: DatasetInfo,
-        workspace_scope: str,
-        main_workspace: Optional[TerraWorkspace],
-        sub_workspaces: dict[str, TerraWorkspace],
-        researchers_with_genomics_access: set[int],
-        gcp: GCPCloudFunctions,
-        participant_to_sample: dict[str, str],
+            self,
+            dataset_info: DatasetInfo,
+            workspace_scope: str,
+            main_workspace: Optional[TerraWorkspace],
+            sub_workspaces: dict[str, TerraWorkspace],
+            researchers_with_genomics_access: set[int],
+            gcp: GCPCloudFunctions,
+            participant_to_sample: dict[str, str],
     ) -> None:
-        """
-        Args:
-            dataset_info:                     Parsed dataset containing main and sub dataset
-                                              files and their pre-loaded row contents.
-            workspace_scope:                  Controls which workspaces are validated.
-                                              One of "all", "main", or "sub".
-            main_workspace:                   TerraWorkspace object for the main workspace,
-                                              or None when scope is "sub" only.
-            sub_workspaces:                   Dict mapping workspace name -> TerraWorkspace
-                                              for each sub workspace.
-            researchers_with_genomics_access: Set of researcher IDs that have clearance for
-                                              genomics file access. These workspaces are
-                                              expected to contain sequencing_files_table.
-            gcp:                              Shared GCPCloudFunctions instance, passed to
-                                              GenomicsFileChecker.
-            participant_to_sample:            Mapping of participant_id -> sample_id used by
-                                              GenomicsFileChecker to resolve file paths.
-        """
+
         self.dataset_info = dataset_info
         self.workspace_scope = workspace_scope
         self.main_workspace = main_workspace
         self.sub_workspaces = sub_workspaces
         self.researchers_with_genomics_access = researchers_with_genomics_access
+        self.gcp_obj = gcp
         # Single GenomicsFileChecker instance reused across all workspaces to avoid
         # redundant construction (each construction reads the duplicate mapping CSV).
         self._genomics_checker = GenomicsFileChecker(
-            gcp=gcp,
+            gcp=self.gcp_obj,
             participant_to_sample=participant_to_sample,
             genomics_bucket=GENOMICS_BUCKET,
         )
 
-    def _build_expected_table_data_for_main(
-        self, participant_files: dict[str, dict]
-    ) -> dict[str, Any]:
+    def _build_expected_table_data_for_main(self, participant_files: dict[str, dict]) -> dict[str, Any]:
         """
         Build the expected table data for the main workspace.
 
@@ -372,21 +279,12 @@ class TerraTablePostValidation:
         the expected sequencing_files_table rows from the pre-checked participant_files
         dict using create_sequencing_files_table_data — the same function used during upload.
 
-        Args:
-            participant_files: Dict of participant_id -> {file_type: path_or_None} as
-                               returned by GenomicsFileChecker.check_all_participants().
-
-        Returns:
-            Dict mapping table_name -> row_data list.
         """
         expected_table_data: dict[str, Any] = {}
 
         for csv_path in self.dataset_info.main_dataset_files:
             file_contents = self.dataset_info.main_file_contents_map[csv_path]
-            # Returns {table_name: {"table_id_column": ..., "row_data": [...]}}
-            table_data = convert_csv_rows_to_table_data(
-                csv_path=csv_path, file_contents=file_contents
-            )
+            table_data = convert_csv_rows_to_table_data(csv_path=csv_path, file_contents=file_contents)
             for table_name, data in table_data.items():
                 # Store only the row_data; table_id_column is not needed for validation
                 expected_table_data[table_name] = data["row_data"]
@@ -395,26 +293,16 @@ class TerraTablePostValidation:
         # matching the exact output that create_and_upload_metadata_to_workspaces produces.
         seq_table_data = create_sequencing_files_table_data(participant_files=participant_files)
         expected_table_data["sequencing_files_table"] = seq_table_data["sequencing_files_table"]["row_data"]
-
         return expected_table_data
 
-    def _build_expected_table_data_for_sub(
-        self, sub_dataset: SubDatasetInfo, participant_files: dict[str, dict]
-    ) -> dict[str, Any]:
+    def _build_expected_table_data_for_sub(self, sub_dataset: SubDatasetInfo, participant_files: dict[str, dict]) -> dict[str, Any]:
         """
         Build the expected table data for a single sub workspace.
 
         Files in MAIN_ONLY_CSVS are skipped because they are only uploaded to the main
-        workspace. sequencing_files_table is included with real rows when the researcher
+        workspace. The sequencing_files_table is included with real rows when the researcher
         has genomics access.
 
-        Args:
-            sub_dataset:       SubDatasetInfo for the sub workspace being validated.
-            participant_files: Dict of participant_id -> {file_type: path_or_None}, already
-                               filtered to this sub workspace's participants.
-
-        Returns:
-            Dict mapping table_name -> row_data list.
         """
         expected_table_data: dict[str, Any] = {}
 
@@ -423,9 +311,7 @@ class TerraTablePostValidation:
             if Path(csv_path).name in MAIN_ONLY_CSVS:
                 continue
             file_contents = sub_dataset.file_contents_map[csv_path]
-            table_data = convert_csv_rows_to_table_data(
-                csv_path=csv_path, file_contents=file_contents
-            )
+            table_data = convert_csv_rows_to_table_data(csv_path=csv_path, file_contents=file_contents)
             for table_name, data in table_data.items():
                 expected_table_data[table_name] = data["row_data"]
 
@@ -450,10 +336,7 @@ class TerraTablePostValidation:
         Uses WorkspaceManager.workspace_has_all_tables with check_no_extra=True so
         both missing and unexpected extra tables are caught and logged.
         """
-        logging.info(
-            f"[{context}] Validating {len(expected_tables)} expected table(s): "
-            f"{sorted(expected_tables)}"
-        )
+        logging.info(f"[{context}] Validating {len(expected_tables)} expected table(s): {sorted(expected_tables)}")
         return WorkspaceManager.workspace_has_all_tables(
             workspace=workspace,
             expected_tables=expected_tables,
@@ -477,16 +360,6 @@ class TerraTablePostValidation:
         Rows are compared as sets of (key, value) frozensets so that row order and
         the synthetic ID column do not affect the result.  All values are stringified
         for a consistent comparison regardless of Python type returned by model_dump.
-
-        Args:
-            workspace:     TerraWorkspace object to query for actual rows.
-            table_name:    Name of the Terra table to validate.
-            expected_rows: Row dicts built by convert_csv_rows_to_table_data or
-                           create_sequencing_files_table_data.
-            context:       Label used in log messages (e.g. "Main" or workspace name).
-
-        Returns:
-            True if actual rows match expected exactly; False otherwise.
         """
         # Fetch current rows from the Terra workspace
         actual_rows = WorkspaceManager.get_table_rows(workspace, table_name)
@@ -552,33 +425,20 @@ class TerraTablePostValidation:
         Runs the genomics file check once for all main participants upfront, then
         filters the result per sub workspace rather than re-running the check for each.
         Stops on the first failure to avoid misleading downstream results.
-
-        Returns:
-            True if all applicable checks pass; False otherwise.
         """
         logging.info(f"Starting Terra table post-validation (workspace_scope='{self.workspace_scope}')")
 
         # Run the genomics file check once for all main participants.
         # Sub workspace results are sliced from this dict rather than re-checked,
         # avoiding redundant multithreaded GCP calls.
-        all_main_participants = extract_all_participant_ids_from_files(
-            self.dataset_info.main_file_contents_map
-        )
-        logging.info(
-            f"Checking genomics files for {len(all_main_participants)} main participant(s)..."
-        )
-        all_participant_files = self._genomics_checker.check_all_participants(
-            all_main_participants
-        )
+        all_main_participants = extract_all_participant_ids_from_files(self.dataset_info.main_file_contents_map)
+        logging.info(f"Checking genomics files for {len(all_main_participants)} main participant(s)")
+        all_participant_files = self._genomics_checker.check_all_participants(all_main_participants)
 
-        # ------------------------------------------------------------------
-        # Validate main workspace
-        # ------------------------------------------------------------------
+        # Validate the main workspace
         if self.workspace_scope in ("all", "main"):
             if self.main_workspace is None:
-                logging.error(
-                    "Main workspace object is None — cannot validate main workspace tables"
-                )
+                logging.error("Main workspace object is None — cannot validate main workspace tables")
                 return False
 
             logging.info("Building expected table data for main workspace...")
@@ -591,9 +451,7 @@ class TerraTablePostValidation:
                 expected_tables=expected_main_tables,
                 context="Main",
             ):
-                logging.error(
-                    "Main workspace table validation failed — stopping post-validation"
-                )
+                logging.error("Main workspace table validation failed — stopping post-validation")
                 return False
 
             # Step 2: verify the row contents of every expected table against Terra.
@@ -606,37 +464,25 @@ class TerraTablePostValidation:
                     expected_rows=expected_rows,
                     context="Main",
                 ):
-                    logging.error(
-                        f"Main workspace '{table_name}' content validation failed — "
-                        "stopping post-validation"
-                    )
+                    logging.error(f"Main workspace '{table_name}' content validation failed — stopping post-validation")
                     return False
 
-            logging.info(
-                f"Main workspace validated successfully ({len(expected_main_tables)} table(s))"
-            )
+            logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
 
-        # ------------------------------------------------------------------
         # Validate each sub workspace
-        # ------------------------------------------------------------------
         if self.workspace_scope in ("all", "sub"):
             for sub_dataset in self.dataset_info.sub_datasets:
                 workspace_name = sub_dataset.workspace_name
 
                 if workspace_name not in self.sub_workspaces:
-                    logging.error(
-                        f"No TerraWorkspace object found for sub workspace '{workspace_name}' — "
-                        f"stopping post-validation"
-                    )
+                    logging.error(f"No TerraWorkspace object found for sub workspace '{workspace_name}' — stopping post-validation")
                     return False
 
-                sub_workspace = self.sub_workspaces[workspace_name]
+                sub_workspace_obj = self.sub_workspaces[workspace_name]
 
                 # Filter the already-checked participant file map to this sub workspace's
                 # participants so we don't re-run the expensive GCP existence check.
-                sub_participants = extract_all_participant_ids_from_files(
-                    sub_dataset.file_contents_map
-                )
+                sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
                 sub_participant_files = {
                     p: all_participant_files[p]
                     for p in sub_participants
@@ -644,42 +490,31 @@ class TerraTablePostValidation:
                 }
 
                 logging.info(f"Building expected table data for sub workspace '{workspace_name}'")
-                expected_sub_data = self._build_expected_table_data_for_sub(
-                    sub_dataset, sub_participant_files
-                )
+                expected_sub_data = self._build_expected_table_data_for_sub(sub_dataset, sub_participant_files)
                 expected_sub_tables = list(expected_sub_data.keys())
 
                 # Step 1: verify all expected tables exist with no extras
                 if not self._validate_workspace_tables(
-                    workspace=sub_workspace,
+                    workspace=sub_workspace_obj,
                     expected_tables=expected_sub_tables,
                     context=workspace_name,
                 ):
-                    logging.error(
-                        f"Sub workspace '{workspace_name}' table validation failed — "
-                        f"stopping post-validation"
-                    )
+                    logging.error(f"Sub workspace '{workspace_name}' table validation failed — stopping post-validation")
                     return False
 
                 # Step 2: verify the row contents of every expected table against Terra.
                 # Covers all CSV-backed tables and sequencing_files_table (where applicable).
                 for table_name, expected_rows in expected_sub_data.items():
                     if not self._validate_table_contents(
-                        workspace=sub_workspace,
+                        workspace=sub_workspace_obj,
                         table_name=table_name,
                         expected_rows=expected_rows,
                         context=workspace_name,
                     ):
-                        logging.error(
-                            f"Sub workspace '{workspace_name}' '{table_name}' content "
-                            f"validation failed — stopping post-validation"
-                        )
+                        logging.error(f"Sub workspace '{workspace_name}' '{table_name}' content validation failed — stopping post-validation")
                         return False
 
-                logging.info(
-                    f"Sub workspace '{workspace_name}' validated successfully "
-                    f"({len(expected_sub_tables)} table(s))"
-                )
+                logging.info("Sub workspace '{workspace_name}' validated successfully ({len(expected_sub_tables)} table(s))")
 
         logging.info("All Terra table post-validation checks passed successfully")
         return True
@@ -699,35 +534,18 @@ def get_args() -> Namespace:
 
 if __name__ == '__main__':
     args = get_args()
-
-    # ----------------------------------------------------------------
-    # Step 1: Download all CSV file paths and their contents from the
-    # release bucket in a single multithreaded call.
-    # parse_csv_paths_to_dataset_info also reads each sub dataset's
-    # metadata CSV from the loaded contents and fully populates
-    # project_name, date_created, and workspace_name on every
-    # SubDatasetInfo — no further side-effect calls are needed.
-    # ----------------------------------------------------------------
     gcp_client = GCPCloudFunctions()
-    dataset_info = list_bucket_path_and_parse_dataset_info(
-        bucket=METADATA_CSVS_BUCKET, gcp=gcp_client
-    )
-
-    # ----------------------------------------------------------------
-    # Step 2: Initialise Terra API clients and build TerraWorkspace
-    # objects for the already-existing workspaces.
-    # No workspaces are created here — objects are constructed directly
-    # from the pre-populated workspace names so the API can be called
-    # on existing workspaces without any creation side effects.
-    # ----------------------------------------------------------------
     token = Token()
     request_util = RunRequest(token=token)
 
-    main_workspace: Optional[TerraWorkspace] = None
+    # Step 1: Download all CSV file paths and their contents
+    dataset_info = list_bucket_path_and_parse_dataset_info(bucket=METADATA_CSVS_BUCKET, gcp=gcp_client)
+
+    # Step 2: Initialise Terra API clients and build TerraWorkspace objects for the already-existing workspaces.
+    main_workspace: TerraWorkspace = None
     sub_workspaces: dict[str, TerraWorkspace] = {}
 
     if args.workspace_scope in ("all", "main"):
-        # Connect to the existing main workspace by its known constant name
         main_workspace = TerraWorkspace(
             billing_project=BILLING_PROJECT,
             workspace_name=MAIN_WORKSPACE_NAME,
@@ -736,47 +554,31 @@ if __name__ == '__main__':
 
     if args.workspace_scope in ("all", "sub"):
         for sub_dataset in dataset_info.sub_datasets:
-            # workspace_name is already set by parse_csv_paths_to_dataset_info
             sub_workspaces[sub_dataset.workspace_name] = TerraWorkspace(
                 billing_project=BILLING_PROJECT,
                 workspace_name=sub_dataset.workspace_name,
                 request_util=request_util,
             )
 
-    # ----------------------------------------------------------------
     # Step 3: Load the genomics access list.
-    # This determines whether sequencing_files_table is expected in each
-    # sub workspace when running TerraTablePostValidation.
-    # ----------------------------------------------------------------
+    # This determines whether sequencing_files_table is expected in each sub workspace when running TerraTablePostValidation
     genomics_access_contents = get_cloud_csv_contents_as_dict(GENOMICS_FILE_ACCESS_CSV, gcp_client)
-    researchers_with_genomics_access = {
-        int(row["Researcher ID"]) for row in genomics_access_contents
-    }
-    logging.info(
-        f"Loaded genomics access list: "
-        f"{len(researchers_with_genomics_access)} researcher(s) have access"
-    )
+    researchers_with_genomics_access = {int(row["Researcher ID"]) for row in genomics_access_contents}
+    logging.info(f"Loaded genomics access list: {len(researchers_with_genomics_access)} researcher(s) have access")
 
-    # ----------------------------------------------------------------
+
     # Step 4: Run participant post-validation.
-    # Checks that all participants are active/enrolled and that sub
-    # workspace participants are a subset of the main dataset.
-    # ----------------------------------------------------------------
+    # Checks that all participants are active/enrolled and that sub workspace participants are a subset of the main dataset.
     participant_validator = ParticipantPostValidation(
         dataset_info=dataset_info,
         workspace_scope=args.workspace_scope,
     )
     if not participant_validator.run():
         logging.error("Participant post-validation failed.")
-        #exit(1) # TODO uncomment this after testing
+        exit(1)
 
-    # ----------------------------------------------------------------
     # Step 5: Load the participant-to-sample mapping and run Terra
     # table post-validation.
-    # GenomicsFileChecker is constructed inside TerraTablePostValidation
-    # and the genomics file check runs once for all main participants,
-    # with per-sub-workspace results sliced from that single result.
-    # ----------------------------------------------------------------
     participant_to_sample = load_participant_to_sample_mapping(gcp=gcp_client)
     if not participant_to_sample:
         logging.error("Failed to load participant to sample ID mapping. Exiting.")
