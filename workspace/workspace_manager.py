@@ -6,6 +6,7 @@ import re
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
+from constants import BILLING_PROJECT
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.column_order import TABLE_COLUMN_ORDER
 
@@ -157,7 +158,7 @@ class WorkspaceManager:
         Returns:
             List of row dicts, one per entity in the table.
         """
-        return workspace.get_gcp_workspace_metrics(entity_type=table_name)
+        return workspace.get_flat_list_of_table_entity(entity_type=table_name)
 
     def should_skip_uploads(self, workspace: TerraWorkspace, expected_tables: list[str], force: bool) -> bool:
         """
@@ -192,7 +193,7 @@ class WorkspaceManager:
             TerraWorkspace object
         """
         workspace = TerraWorkspace(
-            billing_project="ops-integration-billing",  # TODO CHANGE BACK
+            billing_project=BILLING_PROJECT,
             workspace_name=workspace_name,
             request_util=self.request_util
         )

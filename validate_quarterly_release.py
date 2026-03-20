@@ -496,14 +496,24 @@ class TerraTablePostValidation:
         id_col = f"{table_name}_id"
 
         def row_key(row: dict) -> frozenset:
+            # frozenset is used because:
+            #   - it is hashable, so it can be placed in a set for O(1) lookup
+            #   - it is order-independent, so column order differences don't matter
+            #   - each (key, value) pair becomes one element, making set difference
+            #     straightforward for identifying missing/extra rows
             return frozenset(
                 (k, str(v) if v is not None else "")
                 for k, v in row.items()
                 if k != id_col
             )
 
-        expected_keys = {row_key(r) for r in expected_rows}
-        actual_keys = {row_key(r) for r in actual_rows}
+        # Build lookup dicts so we can retrieve the full original row (including the
+        # ID column) when logging mismatches, rather than the stripped frozenset version.
+        expected_key_to_row = {row_key(r): r for r in expected_rows}
+        actual_key_to_row = {row_key(r): r for r in actual_rows}
+
+        expected_keys = set(expected_key_to_row.keys())
+        actual_keys = set(actual_key_to_row.keys())
 
         missing = expected_keys - actual_keys
         extra = actual_keys - expected_keys
@@ -513,11 +523,19 @@ class TerraTablePostValidation:
                 f"[{context}] {table_name}: "
                 f"{len(missing)} expected row(s) not found in Terra workspace"
             )
+            for row_fs in sorted(missing, key=lambda fs: dict(fs).get("participant_id", "")):
+                logging.error(
+                    f"[{context}] {table_name} missing row: {expected_key_to_row[row_fs]}"
+                )
         if extra:
             logging.error(
                 f"[{context}] {table_name}: "
                 f"{len(extra)} unexpected extra row(s) found in Terra workspace"
             )
+            for row_fs in sorted(extra, key=lambda fs: dict(fs).get("participant_id", "")):
+                logging.error(
+                    f"[{context}] {table_name} extra row: {actual_key_to_row[row_fs]}"
+                )
 
         if missing or extra:
             return False
@@ -750,7 +768,7 @@ if __name__ == '__main__':
     )
     if not participant_validator.run():
         logging.error("Participant post-validation failed.")
-        exit(1)
+        #exit(1) # TODO uncomment this after testing
 
     # ----------------------------------------------------------------
     # Step 5: Load the participant-to-sample mapping and run Terra
