@@ -2,7 +2,6 @@
 
 import logging
 import re
-from datetime import datetime
 
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
@@ -33,33 +32,6 @@ class WorkspaceManager:
         self.billing_project = billing_project
         self.main_workspace_name = main_workspace_name
         self.dry_run = dry_run
-
-    @staticmethod
-    def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
-        """
-        Format workspace name as {project_name}_{year}_{month}.
-
-        Args:
-            project_name: Project name from metadata CSV
-            date_created: Date created from metadata CSV (expected format: YYYY-MM-DD or similar)
-
-        Returns:
-            Formatted workspace name
-        """
-        if '-' in date_created:
-            parts = date_created.split('-')
-            year = parts[0]
-            month = parts[1] if len(parts) > 1 else '01'
-        else:
-            # If we can't parse, use current date
-            now = datetime.now()
-            year = now.strftime('%Y')
-            month = now.strftime('%m')
-
-        # Clean up project name (remove spaces, special chars)
-        clean_project_name = re.sub(r'[^\w-]', '_', project_name)
-
-        return f"{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
     def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
         """
@@ -122,29 +94,70 @@ class WorkspaceManager:
         return True
 
     @staticmethod
-    def workspace_has_all_tables(workspace: TerraWorkspace, expected_tables: list[str]) -> bool:
+    def workspace_has_all_tables(
+        workspace: TerraWorkspace,
+        expected_tables: list[str],
+        check_no_extra: bool = False,
+    ) -> bool:
         """
-        Check whether all expected tables already exist in the workspace.
+        Check whether all expected tables exist in the workspace, and optionally
+        that no unexpected extra tables are present.
 
         Args:
-            workspace: TerraWorkspace object to inspect
-            expected_tables: List of table names that must be present (e.g. ['demographics', 'biomarker'])
+            workspace:       TerraWorkspace object to inspect.
+            expected_tables: List of table names that must be present
+                             (e.g. ['demographics_table', 'biomarker_table']).
+            check_no_extra:  When True, also fail if the workspace contains tables
+                             that are not in expected_tables. Defaults to False so
+                             existing callers (upload skip-check) are unaffected.
 
         Returns:
-            True if every expected table is present, False otherwise
+            True if validation passes, False otherwise.
         """
-        # Return list of dicts like ["demographics_table": {...}, "biomarker_table": {...}, ...]
+        # Fetch the current set of tables from the Terra workspace
         workspace_info = workspace.get_workspace_entity_info().json()
-        workspace_tables = [table for table, attributes in workspace_info.items()]
-        missing = [
-            t
-            for t in expected_tables
-            if t not in workspace_tables
-        ]
+        workspace_tables = list(workspace_info.keys())
+
+        # Check for expected tables that are missing from the workspace
+        missing = [t for t in expected_tables if t not in workspace_tables]
         if missing:
+            for t in sorted(missing):
+                logging.error(
+                    f"Workspace '{workspace.workspace_name}': expected table '{t}' is missing"
+                )
             return False
-        logging.info(f"Workspace '{workspace.workspace_name}' already has all expected tables")
+
+        # Optionally check for tables in the workspace that were not expected
+        if check_no_extra:
+            extra = [t for t in workspace_tables if t not in expected_tables]
+            if extra:
+                for t in sorted(extra):
+                    logging.error(
+                        f"Workspace '{workspace.workspace_name}': unexpected extra table '{t}' found"
+                    )
+                return False
+
+        logging.info(f"Workspace '{workspace.workspace_name}' has all expected tables")
         return True
+
+    @staticmethod
+    def get_table_rows(workspace: TerraWorkspace, table_name: str) -> list[dict]:
+        """
+        Fetch all rows for a given table from a Terra workspace.
+
+        Wraps the TerraWorkspace entity query so callers don't need to know the
+        underlying API method.  The returned dicts contain the same columns that
+        were uploaded, including the synthetic row-ID column
+        (e.g. ``sequencing_files_table_id``).
+
+        Args:
+            workspace:  TerraWorkspace object to query.
+            table_name: Name of the Terra entity type / table to fetch rows from.
+
+        Returns:
+            List of row dicts, one per entity in the table.
+        """
+        return workspace.get_gcp_workspace_metrics(entity_type=table_name)
 
     def should_skip_uploads(self, workspace: TerraWorkspace, expected_tables: list[str], force: bool) -> bool:
         """
@@ -193,20 +206,16 @@ class WorkspaceManager:
         """
         Create a sub dataset workspace.
 
+        workspace_name is pre-populated on SubDatasetInfo by parse_csv_paths_to_dataset_info
+        at load time, so it is used directly here without recomputation.
+
         Args:
             sub_dataset_info: SubDatasetInfo object with project metadata
 
         Returns:
             TerraWorkspace object for sub workspace
         """
-        workspace_name = self.format_workspace_name(
-            project_name=sub_dataset_info.project_name,
-            date_created=sub_dataset_info.date_created,
-            researcher_id=sub_dataset_info.researcher_id,
-        )
-        # Set the workspace name in the data model for later use
-        sub_dataset_info.workspace_name = workspace_name
-        return self.create_workspace(workspace_name)
+        return self.create_workspace(sub_dataset_info.workspace_name)
 
     def create_main_workspace(self) -> TerraWorkspace:
         """
