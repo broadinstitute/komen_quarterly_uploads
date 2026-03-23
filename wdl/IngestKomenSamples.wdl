@@ -3,7 +3,7 @@ version 1.0
 workflow IngestKomenSamples {
 	input {
 		String workspace_scope = "main"
-		Boolean force = true
+		Boolean force = false
 		Boolean dry_run = false
 		File? dataset_notes
 		String? docker
