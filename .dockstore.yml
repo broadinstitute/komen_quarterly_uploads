@@ -2,7 +2,14 @@ version: 1.2
 workflows:
   - name: IngestKomenSamples
     subclass: WDL
-    primaryDescriptorPath: /wdl/IngestKomenSamples.wdl
-    readMePath: /wdl/README.md
+    primaryDescriptorPath: /wdl/IngestKomenSamples/IngestKomenSamples.wdl
+    readMePath: /wdl/IngestKomenSamples/README.md
     testParameterFiles:
-      - /wdl/IngestKomenSamples.wdl
+      - /wdl/IngestKomenSamples/IngestKomenSamples.wdl
+
+  - name: ValidateQuarterlyRelease
+    subclass: WDL
+    primaryDescriptorPath: /wdl/ValidateQuarterlyRelease/ValidateQuarterlyRelease.wdl
+    readMePath: /wdl/ValidateQuarterlyRelease/README.md
+    testParameterFiles:
+      - /wdl/ValidateQuarterlyRelease/ValidateQuarterlyRelease.wdl
