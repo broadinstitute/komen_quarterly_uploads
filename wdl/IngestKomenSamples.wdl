@@ -2,7 +2,7 @@ version 1.0
 
 workflow IngestKomenSamples {
 	input {
-		String workspace_scope = "main"
+		String workspace_scope = "all"
 		Boolean force = false
 		Boolean dry_run = false
 		File? dataset_notes
