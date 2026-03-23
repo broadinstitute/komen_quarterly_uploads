@@ -179,33 +179,21 @@ class DatasetValidator:
                 actual_files=file_names
             )
 
-            # Read metadata CSV if validation passed
+            # Validate that project_name was populated from the metadata CSV at parse time.
+            # parse_csv_paths_to_dataset_info extracts project_name and date_created from
+            # the already-loaded file_contents_map, so no additional GCP read is needed here.
             if is_valid:
-                metadata_filename = f"researcher_id_{researcher_id}_project_id_{project_id}_metadata.csv"
-                # Find the metadata file in the files list
-                metadata_path = None
-                for file_path in full_file_paths:
-                    if file_path.endswith(metadata_filename):
-                        metadata_path = file_path
-                        break
-
-                if not metadata_path:
-                    logging.error(f"Metadata file not found: {metadata_filename}")
+                if not sub_dir_info.project_name:
+                    logging.error(
+                        f"Required field 'project_name' is missing or empty for {display_name}"
+                    )
                     validation_results[display_name] = False
                     continue
-
-                metadata = self.read_metadata_csv(metadata_path)
-
-                # project_name is required
-                project_name = metadata.get('project_name', '').strip()
-                if not project_name:
-                    logging.error(f"Required field 'project_name' is missing or empty in {metadata_path}")
-                    validation_results[display_name] = False
-                    continue
-                # Set the project name and date created in the project-specific data model
-                sub_dir_info.project_name = project_name
-                sub_dir_info.date_created = metadata["date_created"].strip()
-                logging.info(f"Read metadata: project_name={sub_dir_info.project_name}, date_created={sub_dir_info.date_created}")
+                logging.info(
+                    f"Metadata validated: project_name='{sub_dir_info.project_name}', "
+                    f"date_created='{sub_dir_info.date_created}', "
+                    f"workspace_name='{sub_dir_info.workspace_name}'"
+                )
 
             validation_results[display_name] = is_valid
 

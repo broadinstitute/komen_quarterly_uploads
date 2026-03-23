@@ -3,7 +3,7 @@
 from typing import Any
 from dataclasses import dataclass, field
 
-
+# TODO add an additional parameter to both these dataclasses to save the participant information (to prevent having to re-access them repeatedly)
 @dataclass
 class SubDatasetInfo:
     """Information about a sub dataset directory."""

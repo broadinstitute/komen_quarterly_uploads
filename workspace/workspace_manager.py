@@ -2,11 +2,11 @@
 
 import logging
 import re
-from datetime import datetime
 
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
+from constants import BILLING_PROJECT
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.column_order import TABLE_COLUMN_ORDER
 
@@ -18,7 +18,7 @@ class WorkspaceManager:
     """Manages Terra workspace creation and data upload operations."""
 
     def __init__(
-            self, request_util: RunRequest, billing_project: str, main_workspace_name: str, dry_run: bool = False
+            self, request_util: RunRequest, billing_project: str, dry_run: bool = False
     ):
         """
         Initialize WorkspaceManager.
@@ -26,40 +26,11 @@ class WorkspaceManager:
         Args:
             request_util: Request utility for Terra API calls
             billing_project: Terra billing project name
-            main_workspace_name: Main workspace name
             dry_run: If True, log workspace creation instead of actually creating workspaces
         """
         self.request_util = request_util
         self.billing_project = billing_project
-        self.main_workspace_name = main_workspace_name
         self.dry_run = dry_run
-
-    @staticmethod
-    def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
-        """
-        Format workspace name as {project_name}_{year}_{month}.
-
-        Args:
-            project_name: Project name from metadata CSV
-            date_created: Date created from metadata CSV (expected format: YYYY-MM-DD or similar)
-
-        Returns:
-            Formatted workspace name
-        """
-        if '-' in date_created:
-            parts = date_created.split('-')
-            year = parts[0]
-            month = parts[1] if len(parts) > 1 else '01'
-        else:
-            # If we can't parse, use current date
-            now = datetime.now()
-            year = now.strftime('%Y')
-            month = now.strftime('%m')
-
-        # Clean up project name (remove spaces, special chars)
-        clean_project_name = re.sub(r'[^\w-]', '_', project_name)
-
-        return f"{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
     def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
         """
@@ -122,29 +93,59 @@ class WorkspaceManager:
         return True
 
     @staticmethod
-    def workspace_has_all_tables(workspace: TerraWorkspace, expected_tables: list[str]) -> bool:
+    def workspace_has_all_tables(
+        workspace: TerraWorkspace,
+        expected_tables: list[str],
+        check_no_extra: bool = False,
+    ) -> bool:
         """
-        Check whether all expected tables already exist in the workspace.
+        Check whether all expected tables exist in the workspace, and optionally
+        that no unexpected extra tables are present.
+        """
+        # Fetch the current set of tables from the Terra workspace
+        workspace_info = workspace.get_workspace_entity_info().json()
+        workspace_tables = list(workspace_info.keys())
+
+        # Check for expected tables that are missing from the workspace
+        missing = [t for t in expected_tables if t not in workspace_tables]
+        if missing:
+            for t in sorted(missing):
+                logging.error(
+                    f"Workspace '{workspace.workspace_name}': expected table '{t}' is missing"
+                )
+            return False
+
+        # Optionally check for tables in the workspace that were not expected
+        if check_no_extra:
+            extra = [t for t in workspace_tables if t not in expected_tables]
+            if extra:
+                for t in sorted(extra):
+                    logging.error(
+                        f"Workspace '{workspace.workspace_name}': unexpected extra table '{t}' found"
+                    )
+                return False
+
+        logging.info(f"Workspace '{workspace.workspace_name}' has all expected tables")
+        return True
+
+    @staticmethod
+    def get_table_rows(workspace: TerraWorkspace, table_name: str) -> list[dict]:
+        """
+        Fetch all rows for a given table from a Terra workspace.
+
+        Wraps the TerraWorkspace entity query so callers don't need to know the
+        underlying API method.  The returned dicts contain the same columns that
+        were uploaded, including the synthetic row-ID column
+        (e.g. ``sequencing_files_table_id``).
 
         Args:
-            workspace: TerraWorkspace object to inspect
-            expected_tables: List of table names that must be present (e.g. ['demographics', 'biomarker'])
+            workspace:  TerraWorkspace object to query.
+            table_name: Name of the Terra entity type / table to fetch rows from.
 
         Returns:
-            True if every expected table is present, False otherwise
+            List of row dicts, one per entity in the table.
         """
-        # Return list of dicts like ["demographics_table": {...}, "biomarker_table": {...}, ...]
-        workspace_info = workspace.get_workspace_entity_info().json()
-        workspace_tables = [table for table, attributes in workspace_info.items()]
-        missing = [
-            t
-            for t in expected_tables
-            if t not in workspace_tables
-        ]
-        if missing:
-            return False
-        logging.info(f"Workspace '{workspace.workspace_name}' already has all expected tables")
-        return True
+        return workspace.get_flat_list_of_table_entity(entity_type=table_name)
 
     def should_skip_uploads(self, workspace: TerraWorkspace, expected_tables: list[str], force: bool) -> bool:
         """
@@ -179,7 +180,7 @@ class WorkspaceManager:
             TerraWorkspace object
         """
         workspace = TerraWorkspace(
-            billing_project="ops-integration-billing",  # TODO CHANGE BACK
+            billing_project=BILLING_PROJECT,
             workspace_name=workspace_name,
             request_util=self.request_util
         )
@@ -188,34 +189,6 @@ class WorkspaceManager:
         else:
             workspace.create_workspace(continue_if_exists=True)
         return workspace
-
-    def create_sub_workspace(self, sub_dataset_info: SubDatasetInfo) -> TerraWorkspace:
-        """
-        Create a sub dataset workspace.
-
-        Args:
-            sub_dataset_info: SubDatasetInfo object with project metadata
-
-        Returns:
-            TerraWorkspace object for sub workspace
-        """
-        workspace_name = self.format_workspace_name(
-            project_name=sub_dataset_info.project_name,
-            date_created=sub_dataset_info.date_created,
-            researcher_id=sub_dataset_info.researcher_id,
-        )
-        # Set the workspace name in the data model for later use
-        sub_dataset_info.workspace_name = workspace_name
-        return self.create_workspace(workspace_name)
-
-    def create_main_workspace(self) -> TerraWorkspace:
-        """
-        Create the main Terra workspace, continuing silently if it already exists.
-
-        Returns:
-            TerraWorkspace object for the main workspace
-        """
-        return self.create_workspace(self.main_workspace_name)
 
     def create_all_sub_workspaces(self, dataset_info: DatasetInfo) -> dict[str, TerraWorkspace]:
         """
@@ -229,7 +202,7 @@ class WorkspaceManager:
         """
         workspaces = {}
         for sub_dir_info in dataset_info.sub_datasets:
-            sub_workspace = self.create_sub_workspace(sub_dir_info)
+            sub_workspace = self.create_workspace(sub_dir_info.workspace_name)
             workspaces[sub_workspace.workspace_name] = sub_workspace
         logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
         return workspaces
