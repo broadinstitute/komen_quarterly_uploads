@@ -32,10 +32,10 @@ task CreateWorkspacesAndUploadMetadata {
 
 	command <<<
 		python /app/create_and_upload_metadata_to_workspaces.py \
-			--workspace-scope ~{workspace_scope} \
-			~{"--dataset-notes " + dataset_notes} \
+			--workspace_scop ~{workspace_scope} \
+			~{"--dataset_notes " + dataset_notes} \
 			~{if force then "--force" else ""} \
-			~{if dry_run then "--dry-run" else ""}
+			~{if dry_run then "--dry_run" else ""}
 
 	>>>
 
