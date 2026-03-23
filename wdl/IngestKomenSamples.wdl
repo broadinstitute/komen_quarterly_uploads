@@ -2,7 +2,10 @@ version 1.0
 
 workflow IngestKomenSamples {
 	input {
-		Boolean continue_if_workspace_exists = true
+		String workspace_scope = "main"
+		Boolean force = false
+		Boolean dry_run = false
+		File? dataset_notes
 		String? docker
 	}
 
@@ -10,20 +13,30 @@ workflow IngestKomenSamples {
 
 	call CreateWorkspacesAndUploadMetadata {
 		input:
-			continue_if_workspace_exists = continue_if_workspace_exists,
+			workspace_scope = workspace_scope,
+			force = force,
+			dry_run = dry_run,
+			dataset_notes = dataset_notes,
 			docker_name = docker_name
 	}
 }
 
 task CreateWorkspacesAndUploadMetadata {
 	input {
-		Boolean continue_if_workspace_exists
+		String workspace_scope
+		Boolean force
+		Boolean dry_run
+		File? dataset_notes
 		String docker_name
 	}
 
 	command <<<
 		python /app/create_and_upload_metadata_to_workspaces.py \
-			~{if continue_if_workspace_exists then "--continue_if_workspace_exists" else ""}
+			--workspace_scop ~{workspace_scope} \
+			~{"--dataset_notes " + dataset_notes} \
+			~{if force then "--force" else ""} \
+			~{if dry_run then "--dry_run" else ""}
+
 	>>>
 
 	runtime {

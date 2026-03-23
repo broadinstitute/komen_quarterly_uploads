@@ -26,6 +26,7 @@ from constants import (
     RESEARCHER_ID_TO_EMAIL_MAPPING,
     GENOMICS_FILE_ACCESS_GROUP_NAME,
     RESEARCH_ADMIN_GROUP_EMAIL,
+    MAIN, SUB, ALL
 )
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo
@@ -42,7 +43,6 @@ from workspace.workspace_manager import WorkspaceManager
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
 from transformation.genomics_file_checker import GenomicsFileChecker
 
-
 logging.basicConfig(
     format="%(levelname)s: %(asctime)s : %(message)s", level=logging.INFO
 )
@@ -54,8 +54,8 @@ def get_args() -> Namespace:
                         help="Skip table existence checks and upload all data regardless of current workspace state")
     parser.add_argument("--dry_run", "-d", action="store_true",
                         help="Log what would happen without creating workspaces, uploading metadata, or modifying ACLs")
-    parser.add_argument("--workspace_scope", "-w", choices=["all", "main", "sub"], default="all",
-                        help="Which workspaces to create and upload: 'all' (default), 'main' only, or 'sub' only")
+    parser.add_argument("--workspace_scope", "-w", choices=[ALL, MAIN, SUB], default=ALL,
+                        help=f"Which workspaces to create and upload: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only")
     parser.add_argument("--dataset_notes", "-n", default=None,
                         help="Optional path to a file whose contents will be set as the description on every workspace created")
     return parser.parse_args()
@@ -289,12 +289,12 @@ def main():
 
     # Create the main workspace
     main_workspace_terra_obj = None
-    if workspace_scope in ("all", "main"):
+    if workspace_scope in (ALL, MAIN):
         main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=MAIN_WORKSPACE_NAME)
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}
-    if workspace_scope in ("all", "sub"):
+    if workspace_scope in (ALL, SUB):
         sub_workspaces = workspace_manager.create_all_sub_workspaces(dataset_info=dataset_info)
 
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
@@ -305,17 +305,17 @@ def main():
 
     # Determine which workspaces actually need uploads before doing any heavy processing.
     # A workspace is skipped only if all its expected tables already exist (and --force is not set).
-    if workspace_scope in ("all", "main") and not dry_run:
+    if workspace_scope in (ALL, MAIN) and not dry_run:
         # Derive expected table names from the main dataset files using the shared utility
         main_expected_tables = get_expected_main_table_names(dataset_info.main_dataset_files)
         main_needs_upload = not workspace_manager.should_skip_uploads(main_workspace_terra_obj, main_expected_tables, force)
-    elif workspace_scope in ("all", "main"):
+    elif workspace_scope in (ALL, MAIN):
         main_needs_upload = True  # dry_run always proceeds
     else:
         main_needs_upload = False
 
     sub_workspaces_needing_upload: set[str] = set()
-    if workspace_scope in ("all", "sub") and not dry_run:
+    if workspace_scope in (ALL, SUB) and not dry_run:
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspace_terra_obj = sub_workspaces[sub_dataset.workspace_name]
             # Derive expected table names using the shared utility; MAIN_ONLY_CSVS are excluded
@@ -325,7 +325,7 @@ def main():
             )
             if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
                 sub_workspaces_needing_upload.add(sub_dataset.workspace_name)
-    elif workspace_scope in ("all", "sub"):
+    elif workspace_scope in (ALL, SUB):
         sub_workspaces_needing_upload = {sd.workspace_name for sd in dataset_info.sub_datasets}  # dry_run always proceeds
 
     any_workspace_needs_upload = main_needs_upload or bool(sub_workspaces_needing_upload)
@@ -344,7 +344,7 @@ def main():
 
     sub_workspace_metadata = []
     unknown_participant_failures = 0
-    if workspace_scope in ("all", "sub"):
+    if workspace_scope in (ALL, SUB):
         for sub_dataset in dataset_info.sub_datasets:
             if sub_dataset.workspace_name not in sub_workspaces_needing_upload:
                 continue
@@ -419,7 +419,7 @@ def main():
     researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING, gcp=gcp)
 
     # Process main workspace
-    if workspace_scope in ("all", "main") and main_needs_upload:
+    if workspace_scope in (ALL, MAIN) and main_needs_upload:
         process_main_workspace(
             dataset_info=dataset_info,
             terra_workspace_obj=main_workspace_terra_obj,
@@ -430,7 +430,7 @@ def main():
         )
 
     # Process sub workspaces
-    if workspace_scope in ("all", "sub") and sub_workspaces_needing_upload:
+    if workspace_scope in (ALL, SUB) and sub_workspaces_needing_upload:
         sub_mapping_failures = process_sub_workspaces(
             dataset_info=dataset_info,
             sub_workspace_metadata=sub_workspace_metadata,
@@ -448,8 +448,8 @@ def main():
 
     logging.info(
         f"Successfully processed "
-        f"{'1 main workspace' if workspace_scope in ('all', 'main') else '0 main workspaces'} and "
-        f"{len(sub_workspace_metadata) if workspace_scope in ('all', 'sub') else 0} sub-workspace(s)"
+        f"{'1 main workspace' if workspace_scope in (ALL, MAIN) else '0 main workspaces'} and "
+        f"{len(sub_workspace_metadata) if workspace_scope in (ALL, SUB) else 0} sub-workspace(s)"
     )
 
     if mapping_failures:

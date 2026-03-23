@@ -32,6 +32,7 @@ from constants import (
     MAIN_WORKSPACE_NAME,
     GENOMICS_FILE_ACCESS_CSV,
     GENOMICS_BUCKET,
+    MAIN, SUB, ALL
 )
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
@@ -122,7 +123,7 @@ class ParticipantPostValidation:
         A participant fails if:
           - They are absent from enrollment_map entirely, OR
           - Their role_user_status != EXPECTED_STATUS, OR
-          - Their step != EXPECTED_STEP
+          - Their step != EXPECTED_ENROLLMENT_STATUS
 
         """
         failed: list[str] = []
@@ -206,7 +207,7 @@ class ParticipantPostValidation:
         logging.info(f"Extracted {len(main_participants)} unique participant(s) from main dataset")
 
         # Verify that every sub workspace participant exists in the main dataset.
-        if self.workspace_scope in ("all", "sub"):
+        if self.workspace_scope in (ALL, SUB):
             logging.info("Checking that all sub workspace participants are present in the main dataset")
             if not self._validate_sub_participants_in_main(main_participants):
                 logging.error("Sub workspace participant check failed — skipping enrollment status check (contents match not performed)")
@@ -219,16 +220,15 @@ class ParticipantPostValidation:
             return False
 
         # Validate that all main dataset participants are active and enrolled.
-        if self.workspace_scope in ("all", "main"):
+        if self.workspace_scope in (ALL, MAIN):
             logging.info("Validating enrollment status for main dataset participants")
             if not self._validate_participants_active_and_enrolled(main_participants, enrollment_map, context="Main"):
                 logging.error("Main dataset enrollment validation failed — contents match check not performed")
                 return False
 
         # Validate that each sub dataset's participants are active and enrolled.
-        if self.workspace_scope in ("all", "sub"):
+        if self.workspace_scope in (ALL, SUB):
             for sub_dataset in self.dataset_info.sub_datasets:
-                # Use workspace_name if available; fall back to researcher/project IDs
                 context = sub_dataset.workspace_name
                 sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
                 logging.info(f"Validating enrollment status for sub workspace '{context}' ({len(sub_participants)} participant(s))")
@@ -436,7 +436,7 @@ class TerraTablePostValidation:
         all_participant_files = self._genomics_checker.check_all_participants(all_main_participants)
 
         # Validate the main workspace
-        if self.workspace_scope in ("all", "main"):
+        if self.workspace_scope in (ALL, MAIN):
             if self.main_workspace is None:
                 logging.error("Main workspace object is None — cannot validate main workspace tables")
                 return False
@@ -470,7 +470,7 @@ class TerraTablePostValidation:
             logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
 
         # Validate each sub workspace
-        if self.workspace_scope in ("all", "sub"):
+        if self.workspace_scope in (ALL, SUB):
             for sub_dataset in self.dataset_info.sub_datasets:
                 workspace_name = sub_dataset.workspace_name
 
@@ -525,9 +525,9 @@ def get_args() -> Namespace:
     parser = ArgumentParser(description="Validate quarterly release workspaces")
     parser.add_argument(
         "--workspace_scope", "-w",
-        choices=["all", "main", "sub"],
-        default="all",
-        help="Which workspaces to validate: 'all' (default), 'main' only, or 'sub' only",
+        choices=[ALL, MAIN, SUB],
+        default=ALL,
+        help=f"Which workspaces to validate: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only",
     )
     return parser.parse_args()
 
@@ -545,14 +545,14 @@ if __name__ == '__main__':
     main_workspace: TerraWorkspace = None
     sub_workspaces: dict[str, TerraWorkspace] = {}
 
-    if args.workspace_scope in ("all", "main"):
+    if args.workspace_scope in (ALL, MAIN):
         main_workspace = TerraWorkspace(
             billing_project=BILLING_PROJECT,
             workspace_name=MAIN_WORKSPACE_NAME,
             request_util=request_util,
         )
 
-    if args.workspace_scope in ("all", "sub"):
+    if args.workspace_scope in (ALL, SUB):
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspaces[sub_dataset.workspace_name] = TerraWorkspace(
                 billing_project=BILLING_PROJECT,
