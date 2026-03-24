@@ -286,7 +286,7 @@ class TerraTablePostValidation:
                 # Store only the row_data; table_id_column is not needed for validation
                 expected_table_data[table_name] = data["row_data"]
 
-        # Add the "calculated-age_diagnosis_table" to the list of expected tables to validate
+        # Add the "calculated_age_diagnosis_table" to the list of expected tables to validate
         calculated_age_diagnosis_data = create_calculated_age_diagnosis_table_data(
                 file_contents_map=self.dataset_info.main_file_contents_map,
                 unique_patient_ids=unique_participants
@@ -322,7 +322,7 @@ class TerraTablePostValidation:
             for table_name, data in table_data.items():
                 expected_table_data[table_name] = data["row_data"]
 
-        # Add the "calculated-age_diagnosis_table" to the list of expected tables to validate
+        # Add the "calculated_age_diagnosis_table" to the list of expected tables to validate
         calculated_age_diagnosis_data = create_calculated_age_diagnosis_table_data(
             file_contents_map=sub_dataset.file_contents_map,
             unique_patient_ids=unique_participants
