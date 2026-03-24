@@ -529,6 +529,15 @@ def get_args() -> Namespace:
         default=ALL,
         help=f"Which workspaces to validate: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only",
     )
+    parser.add_argument(
+        "--sub_workspaces", "-s",
+        nargs="+",
+        help=(
+            "Optional list of sub workspace names to validate. "
+            f"Only valid when --workspace_scope is '{SUB}' or '{ALL}'. "
+            "If any name is not found in the dataset an error is raised."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -538,8 +547,16 @@ if __name__ == '__main__':
     token = Token()
     request_util = RunRequest(token=token)
 
+    sub_workspaces_filter = args.sub_workspaces
+    if sub_workspaces_filter:
+        logging.info(f"Sub workspace filter active — will only validate: {sub_workspaces_filter}")
+
     # Step 1: Download all CSV file paths and their contents
-    dataset_info = list_bucket_path_and_parse_dataset_info(bucket=METADATA_CSVS_BUCKET, gcp=gcp_client)
+    dataset_info = list_bucket_path_and_parse_dataset_info(
+        bucket=METADATA_CSVS_BUCKET,
+        gcp=gcp_client,
+        sub_workspaces_filter=sub_workspaces_filter,
+    )
 
     # Step 2: Initialise Terra API clients and build TerraWorkspace objects for the already-existing workspaces.
     main_workspace: TerraWorkspace = None

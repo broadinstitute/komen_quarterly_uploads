@@ -20,13 +20,14 @@ It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `cre
 
 ## Inputs
 
-| Input Name | Description | Type | Required | Default |
-|---|---|---|---|---|
-| `workspace_scope` | Which workspaces to create and upload to. `all` creates the main workspace and all sub workspaces. `main` creates only the main workspace. `sub` creates only sub workspaces (still reads main participants to validate sub participants are a subset). | `String` | No | `"all"` |
-| `force` | Skip the table existence check and upload all data regardless of what is already in each workspace. | `Boolean` | No | `true` |
-| `dry_run` | Log everything that would happen without actually creating workspaces, uploading metadata, or modifying ACLs. | `Boolean` | No | `false` |
-| `dataset_notes` | Path to a plain-text file whose contents will be set as the description attribute on every workspace created or updated. | `File?` | No | _(none)_ |
-| `docker` | Docker image to use for the task. If not provided, the latest production image is used. | `String?` | No | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
+| Input Name        | Description                                                                                                                                                                                                                                                                                      | Type       | Required | Default                                                                                    |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|----------|--------------------------------------------------------------------------------------------|
+| `workspace_scope` | Which workspaces to create and upload to. `all` creates the main workspace and all sub workspaces. `main` creates only the main workspace. `sub` creates only sub workspaces (still reads main participants to validate sub participants are a subset).                                          | `String`   | No       | `"all"`                                                                                    |
+| `sub_workspaces`  | Space-separated string of exact sub workspace names to create and upload (e.g. `"WorkspaceA WorkspaceB"`). When provided, only those sub workspaces are processed and all others are skipped. Any name not found in the dataset raises an error. Has no effect when `workspace_scope` is `main`. | `String?`  | No       | _(none — all sub workspaces are processed)_                                                |
+| `force`           | Skip the table existence check and upload all data regardless of what is already in each workspace.                                                                                                                                                                                              | `Boolean`  | No       | `true`                                                                                     |
+| `dry_run`         | Log everything that would happen without actually creating workspaces, uploading metadata, or modifying ACLs.                                                                                                                                                                                    | `Boolean`  | No       | `false`                                                                                    |
+| `dataset_notes`   | Path to a plain-text file whose contents will be set as the description attribute on every workspace created or updated.                                                                                                                                                                         | `File?`    | No       | _(none)_                                                                                   |
+| `docker`          | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                                                                          | `String?`  | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
 
 ---
 
@@ -36,6 +37,8 @@ It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `cre
 All CSV files are listed from the metadata GCS bucket and read in parallel with multithreading. Files are separated into:
 - **Main dataset** — files under a `shareforcures_dataset_*/` directory
 - **Sub datasets** — files under `researcher_id_<id>_project_id_<id>/` directories
+
+If `sub_workspaces` is provided, only sub datasets whose derived workspace name appears in that space-separated list are kept. All other sub datasets are skipped before any validation or upload work begins. If any name in the list does not match a sub dataset found in the bucket, the script raises an error immediately.
 
 ### 2. Validate datasets
 Every CSV is validated against its Pydantic model from `csv_schemas`. Validation checks:

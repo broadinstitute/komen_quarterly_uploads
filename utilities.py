@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 
@@ -35,13 +35,25 @@ def format_workspace_name(project_name: str, date_created: str, researcher_id: i
     return f"{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
 
-def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunctions) -> DatasetInfo:
+def parse_csv_paths_to_dataset_info(
+    all_csv_paths: list[str],
+    gcp: GCPCloudFunctions,
+    sub_workspaces_filter: Optional[list[str]] = None,
+) -> DatasetInfo:
     """
     Parse a list of CSV file paths into a DatasetInfo structure.
 
     Separates files into the main dataset (under shareforcures_dataset_*/) and
     sub datasets (under researcher_id_*_project_id_*/).
     Read all file contents in a single multithreaded call then organize them.
+
+    Args:
+        all_csv_paths: Full list of GCS paths to process.
+        gcp: Shared GCPCloudFunctions instance.
+        sub_workspaces_filter: Optional list of sub workspace names to include.
+            When provided, any sub dataset whose derived workspace_name is not in
+            this list is silently skipped.  If the list contains names that did not
+            match any sub dataset an error is logged and a ValueError is raised.
     """
     # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
     main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
@@ -76,6 +88,8 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
                 sub_datasets_dict[key]["contents"][file_path] = contents_as_list
 
     sub_datasets = []
+    found_filtered_names: list[str] = []  # tracks which filter names were actually matched
+
     for (researcher_id, project_id), data in sub_datasets_dict.items():
         project_name = None
         date_created = None
@@ -104,6 +118,12 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
                 f"project_name={project_name!r}, date_created={date_created!r}"
             )
 
+        # If a filter is active, skip sub datasets that are not in it
+        if sub_workspaces_filter is not None:
+            if workspace_name not in sub_workspaces_filter:
+                continue
+            found_filtered_names.append(workspace_name)
+
         sub_datasets.append(SubDatasetInfo(
             files=data["files"],
             file_contents_map=data["contents"],
@@ -114,16 +134,31 @@ def parse_csv_paths_to_dataset_info(all_csv_paths: list[str], gcp: GCPCloudFunct
             workspace_name=workspace_name,
         ))
 
+    # If a filter was used, check that every requested name was actually found
+    if sub_workspaces_filter is not None:
+        not_found = [name for name in sub_workspaces_filter if name not in found_filtered_names]
+        if not_found:
+            for name in not_found:
+                logging.error(f"Requested sub workspace '{name}' was not found in the dataset")
+            raise ValueError(
+                f"{len(not_found)} requested sub workspace(s) were not found in the dataset: "
+                f"{not_found}. Check the workspace names and try again."
+            )
+
     return DatasetInfo(
         main_dataset_files=main_files,
         main_file_contents_map=main_file_contents,
         sub_datasets=sub_datasets
     )
 
-def list_bucket_path_and_parse_dataset_info(bucket: str, gcp: GCPCloudFunctions) -> DatasetInfo:
+def list_bucket_path_and_parse_dataset_info(
+    bucket: str,
+    gcp: GCPCloudFunctions,
+    sub_workspaces_filter: Optional[list[str]] = None,
+) -> DatasetInfo:
     blob_metadata = gcp.list_bucket_contents(bucket_name=bucket, file_extensions_to_include=[".csv"], file_name_only=True)
     all_csv_paths = [a["path"] for a in blob_metadata]
-    dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths, gcp)
+    dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths, gcp, sub_workspaces_filter=sub_workspaces_filter)
     return dataset_info
 
 
