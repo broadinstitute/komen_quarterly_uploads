@@ -20,10 +20,11 @@ Validation stops on the first failure so that root-cause issues can be addressed
 
 ## Inputs
 
-| Input Name         | Description                                                                                                                                                             | Type     | Required | Default                                                                                    |
-|--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------|----------|--------------------------------------------------------------------------------------------|
-| `workspace_scope`  | Which workspaces to validate. `all` validates the main workspace and all sub workspaces. `main` validates only the main workspace. `sub` validates only sub workspaces. | `String` | No       | `"main"`                                                                                   |
-| `docker`           | Docker image to use for the task. If not provided, the latest production image is used.                                                                                 | `String` | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
+| Input Name           | Description                                                                                                                                                                                                                                                                               | Type       | Required | Default                                                                                    |
+|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|----------|--------------------------------------------------------------------------------------------|
+| `workspace_scope`    | Which workspaces to validate. `all` validates the main workspace and all sub workspaces. `main` validates only the main workspace. `sub` validates only sub workspaces.                                                                                                                   | `String`   | No       | `"main"`                                                                                   |
+| `sub_workspaces`     | Space-separated string of exact sub workspace names to validate (e.g. `"WorkspaceA WorkspaceB"`). When provided, only those sub workspaces are validated and all others are skipped. Any name not found in the dataset raises an error. Has no effect when `workspace_scope` is `main`.   | `String?`  | No       | _(none — all sub workspaces are validated)_                                                |
+| `docker`             | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                                                                   | `String`   | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
 
 ---
 
@@ -31,9 +32,11 @@ Validation stops on the first failure so that root-cause issues can be addressed
 
 ### 1. Load and parse CSV files
 All CSV files are listed from the metadata GCS bucket and read in parallel with multithreading. Files are separated 
-into main nad subdatasets.
+into main and subdatasets.
 Each sub dataset's metadata CSV is read at parse time to populate `project_name`, `date_created`, and the derived 
-`workspace_name` on the data model. 
+`workspace_name` on the data model.
+
+If `sub_workspaces` is provided, only sub datasets whose derived workspace name appears in that list are kept. Sub datasets not in the list are skipped before any validation work begins. If a name in the list does not match any sub dataset in the bucket, the script raises an error immediately.
 
 ### 2. Connect to existing Terra workspaces
 `TerraWorkspace` objects are constructed directly from known workspace names without calling any create or modify 

@@ -3,6 +3,7 @@ version 1.0
 workflow ValidateQuarterlyRelease {
 	input {
 		String workspace_scope = "main"
+		String? sub_workspaces_to_check
 		String? docker
 	}
 
@@ -12,7 +13,8 @@ workflow ValidateQuarterlyRelease {
 	call ValidateRelease {
 		input:
 			workspace_scope = workspace_scope,
-			docker_name = docker_name
+			docker_name = docker_name,
+			sub_workspaces_to_check = sub_workspaces_to_check
 	}
 }
 
@@ -20,11 +22,13 @@ task ValidateRelease {
 	input {
 		String workspace_scope
 		String docker_name
+		String? sub_workspaces_to_check
 	}
 
 	command <<<
 		python /app/validate_quarterly_release.py \
-			--workspace_scope ~{workspace_scope}
+			--workspace_scope ~{workspace_scope} \
+			~{"--sub_workspaces " + sub_workspaces_to_check}
 	>>>
 
 	runtime {

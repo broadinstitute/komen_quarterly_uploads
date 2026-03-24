@@ -58,6 +58,15 @@ def get_args() -> Namespace:
                         help=f"Which workspaces to create and upload: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only")
     parser.add_argument("--dataset_notes", "-n", default=None,
                         help="Optional path to a file whose contents will be set as the description on every workspace created")
+    parser.add_argument(
+        "--sub_workspaces", "-s",
+        nargs="+",
+        help=(
+            "Optional list of sub workspace names to create/upload. "
+            f"Only valid when --workspace_scope is '{SUB}' or '{ALL}'. "
+            "If any name is not found in the dataset an error is raised."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -265,10 +274,18 @@ def main():
             dataset_notes = f.read()
         logging.info(f"Loaded dataset notes from {args.dataset_notes}")
 
+    sub_workspaces_filter = args.sub_workspaces
+    if sub_workspaces_filter:
+        logging.info(f"Sub workspace filter active — will only process: {sub_workspaces_filter}")
+
     # Single shared GCP client used throughout
     gcp = GCPCloudFunctions()
-    
-    dataset_info = list_bucket_path_and_parse_dataset_info(bucket=METADATA_CSVS_BUCKET, gcp=gcp)
+
+    dataset_info = list_bucket_path_and_parse_dataset_info(
+        bucket=METADATA_CSVS_BUCKET,
+        gcp=gcp,
+        sub_workspaces_filter=sub_workspaces_filter,
+    )
     
     # Initialize components
     validator = DatasetValidator()

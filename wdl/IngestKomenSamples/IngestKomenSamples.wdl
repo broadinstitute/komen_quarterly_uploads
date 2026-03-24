@@ -5,6 +5,7 @@ workflow IngestKomenSamples {
 		String workspace_scope = "all"
 		Boolean force = false
 		Boolean dry_run = false
+		String? sub_workspaces_to_check
 		File? dataset_notes
 		String? docker
 	}
@@ -18,6 +19,7 @@ workflow IngestKomenSamples {
 			force = force,
 			dry_run = dry_run,
 			dataset_notes = dataset_notes,
+			sub_workspaces_to_check = sub_workspaces_to_check,
 			docker_name = docker_name
 	}
 }
@@ -28,6 +30,7 @@ task CreateWorkspacesAndUploadMetadata {
 		Boolean force
 		Boolean dry_run
 		File? dataset_notes
+		String? sub_workspaces_to_check
 		String docker_name
 	}
 
@@ -35,6 +38,7 @@ task CreateWorkspacesAndUploadMetadata {
 		python /app/create_and_upload_metadata_to_workspaces.py \
 			--workspace_scope ~{workspace_scope} \
 			~{"--dataset_notes " + dataset_notes} \
+			~{"--sub_workspaces " + sub_workspaces_to_check} \
 			~{if force then "--force" else ""} \
 			~{if dry_run then "--dry_run" else ""}
 
