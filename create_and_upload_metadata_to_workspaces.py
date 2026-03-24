@@ -30,14 +30,7 @@ from constants import (
 )
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo
-from utilities import (
-    list_bucket_path_and_parse_dataset_info,
-    extract_all_participant_ids_from_files,
-    get_cloud_csv_contents_as_dict,
-    get_expected_main_table_names,
-    get_expected_sub_table_names,
-    load_participant_to_sample_mapping,
-)
+from utilities import (list_bucket_path_and_parse_dataset_info, extract_all_participant_ids_from_files, get_cloud_csv_contents_as_dict, get_expected_main_table_names, get_expected_sub_table_names, load_participant_to_sample_mapping, create_calculated_age_diagnosis_table_data, )
 from validation.dataset_validator import DatasetValidator
 from workspace.workspace_manager import WorkspaceManager
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
@@ -66,6 +59,7 @@ def process_main_workspace(
     terra_workspace_obj: TerraWorkspace,
     workspace_manager: WorkspaceManager,
     participant_files: dict[str, dict[str, Optional[str]]],
+    participant_ids: set[str],
     dataset_notes: Optional[str] = None,
     dry_run: bool = False,
 ) -> None:
@@ -81,6 +75,7 @@ def process_main_workspace(
         workspace_manager: WorkspaceManager instance used for setting description and column order
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
+        participant_ids: Set of all participant IDs
         dataset_notes: Optional workspace description string to set.
         dry_run: If True, log what would be uploaded without actually uploading.
     """
@@ -102,6 +97,19 @@ def process_main_workspace(
             participant_files=participant_files,
         )
     )
+
+    # Add the calculated age at diagnosis table, which is derived from other existing columns
+    table_data.update(
+        create_calculated_age_diagnosis_table_data(
+            file_contents_map=dataset_info.main_file_contents_map,
+            unique_patient_ids=participant_ids
+        )
+    )
+
+    print(table_data.get("biomarker_table"))
+    print(table_data.get("calculated_age_diagnosis_table"))
+
+
     logging.info(f"Built master sequencing files table data with {len(participant_files)} participants")
     if dry_run:
         logging.info(
@@ -131,7 +139,8 @@ def process_sub_workspaces(
 
     Args:
         dataset_info: Dataset information
-        sub_workspace_metadata: List of dictionaries with sub workspace name, participant set, and TerraWorkspace object
+        sub_workspace_metadata: List of dictionaries with sub workspace name, participant set,
+            the TerraWorkspace object, and a set of all patient_id records
         workspace_manager_obj: WorkspaceManager instance
         all_participant_files: Full dict of participant_id -> {file_type: path_or_None}
                                as returned by GenomicsFileChecker.check_all_participants().
@@ -178,6 +187,13 @@ def process_sub_workspaces(
                     convert_csv_rows_to_table_data(
                         csv_path=csv_file_path,
                         file_contents=file_contents,
+                    )
+                )
+                # Add the calculated age at diagnosis table, which is derived from other existing columns
+                table_data.update(
+                    create_calculated_age_diagnosis_table_data(
+                        file_contents_map=sub_dataset.file_contents_map,
+                        unique_patient_ids=ws_meta["patient_ids"],
                     )
                 )
 
@@ -365,6 +381,7 @@ def main():
                         "workspace_name": sub_dataset.workspace_name,
                         "participants": sub_participants,
                         "sub_workspace_terra_obj": sub_workspace_terra_obj,
+                        "patient_ids": sub_participants
                     }
                 )
                 logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
@@ -426,6 +443,7 @@ def main():
             workspace_manager=workspace_manager,
             participant_files=all_participant_files,
             dataset_notes=dataset_notes,
+            participant_ids=participants_to_check,
             dry_run=dry_run,
         )
 

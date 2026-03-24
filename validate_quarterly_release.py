@@ -38,12 +38,7 @@ from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.genomics_file_checker import GenomicsFileChecker
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
-from utilities import (
-    list_bucket_path_and_parse_dataset_info,
-    extract_all_participant_ids_from_files,
-    get_cloud_csv_contents_as_dict,
-    load_participant_to_sample_mapping,
-)
+from utilities import (list_bucket_path_and_parse_dataset_info, extract_all_participant_ids_from_files, get_cloud_csv_contents_as_dict, load_participant_to_sample_mapping, create_calculated_age_diagnosis_table_data, )
 from workspace.workspace_manager import WorkspaceManager
 
 logging.basicConfig(
@@ -154,11 +149,11 @@ class ParticipantPostValidation:
                 failed.append(participant_id)
 
         if failed:
-            logging.error(f"{context}{len(failed)} participant(s) failed enrollment validation")
+            logging.error(f"{context}: {len(failed)} participant(s) failed enrollment validation")
             return False
 
         logging.info(
-            f"{context}All {len(participant_ids)} participant(s) are "
+            f"{context}: All {len(participant_ids)} participant(s) are "
             f"'{self.EXPECTED_STATUS}' and '{self.EXPECTED_ENROLLMENT_STATUS}'"
         )
         return True
@@ -271,7 +266,9 @@ class TerraTablePostValidation:
             genomics_bucket=GENOMICS_BUCKET,
         )
 
-    def _build_expected_table_data_for_main(self, participant_files: dict[str, dict]) -> dict[str, Any]:
+    def _build_expected_table_data_for_main(
+            self, participant_files: dict[str, dict], unique_participants: set[str]
+    ) -> dict[str, Any]:
         """
         Build the expected table data for the main workspace.
 
@@ -289,13 +286,23 @@ class TerraTablePostValidation:
                 # Store only the row_data; table_id_column is not needed for validation
                 expected_table_data[table_name] = data["row_data"]
 
+        # Add the "calculated-age_diagnosis_table" to the list of expected tables to validate
+        calculated_age_diagnosis_data = create_calculated_age_diagnosis_table_data(
+                file_contents_map=self.dataset_info.main_file_contents_map,
+                unique_patient_ids=unique_participants
+            )
+        for table_name, data in calculated_age_diagnosis_data.items():
+            expected_table_data[table_name] = data["row_data"]
+
         # Build real expected sequencing rows using the live genomics file check results,
         # matching the exact output that create_and_upload_metadata_to_workspaces produces.
         seq_table_data = create_sequencing_files_table_data(participant_files=participant_files)
         expected_table_data["sequencing_files_table"] = seq_table_data["sequencing_files_table"]["row_data"]
         return expected_table_data
 
-    def _build_expected_table_data_for_sub(self, sub_dataset: SubDatasetInfo, participant_files: dict[str, dict]) -> dict[str, Any]:
+    def _build_expected_table_data_for_sub(
+            self, sub_dataset: SubDatasetInfo, participant_files: dict[str, dict], unique_participants: set[str]
+    ) -> dict[str, Any]:
         """
         Build the expected table data for a single sub workspace.
 
@@ -314,6 +321,14 @@ class TerraTablePostValidation:
             table_data = convert_csv_rows_to_table_data(csv_path=csv_path, file_contents=file_contents)
             for table_name, data in table_data.items():
                 expected_table_data[table_name] = data["row_data"]
+
+        # Add the "calculated-age_diagnosis_table" to the list of expected tables to validate
+        calculated_age_diagnosis_data = create_calculated_age_diagnosis_table_data(
+            file_contents_map=sub_dataset.file_contents_map,
+            unique_patient_ids=unique_participants
+        )
+        for table_name, data in calculated_age_diagnosis_data.items():
+            expected_table_data[table_name] = data["row_data"]
 
         # Build real sequencing rows only for researchers with genomics file access
         if sub_dataset.researcher_id in self.researchers_with_genomics_access:
@@ -442,7 +457,9 @@ class TerraTablePostValidation:
                 return False
 
             logging.info("Building expected table data for main workspace...")
-            expected_main_data = self._build_expected_table_data_for_main(all_participant_files)
+            expected_main_data = self._build_expected_table_data_for_main(
+                participant_files=all_participant_files, unique_participants=all_main_participants
+            )
             expected_main_tables = list(expected_main_data.keys())
 
             # Step 1: verify all expected tables exist with no extras
@@ -490,7 +507,9 @@ class TerraTablePostValidation:
                 }
 
                 logging.info(f"Building expected table data for sub workspace '{workspace_name}'")
-                expected_sub_data = self._build_expected_table_data_for_sub(sub_dataset, sub_participant_files)
+                expected_sub_data = self._build_expected_table_data_for_sub(
+                    sub_dataset=sub_dataset, participant_files=sub_participant_files, unique_participants=sub_participants
+                )
                 expected_sub_tables = list(expected_sub_data.keys())
 
                 # Step 1: verify all expected tables exist with no extras

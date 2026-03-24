@@ -435,5 +435,10 @@ TABLE_COLUMN_ORDER: dict[str, dict[str, list[str]]] = {
             "dataset_version", "project_size", "project_filter",
         ],
     },
+    "calculated_age_diagnosis": {
+        "shown": [
+            "patient_id", "current_age", "age_at_diagnosis", "time_since_diagnosis",
+        ]
+    }
 }
 
