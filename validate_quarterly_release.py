@@ -1,7 +1,3 @@
-# TODO: Check with Kelsi if we should be validating the presence of sequencing files or not, since they could change and cause validations to fail when maybe they shouldn't
-# TODO: Check with Kelsi if we should be validating the contents of the sequencing_files_table or just validating that the table exists
-# TODO find out from Kelsi if we need to grab patient enrollment status from JUST main, or for each specific sub-workspace
-
 """
 Post-validation script for Komen Quarterly Uploads.
 
@@ -38,7 +34,13 @@ from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.genomics_file_checker import GenomicsFileChecker
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
-from utilities import (list_bucket_path_and_parse_dataset_info, extract_all_participant_ids_from_files, get_cloud_csv_contents_as_dict, load_participant_to_sample_mapping, create_calculated_age_diagnosis_table_data, )
+from utilities import (
+    list_bucket_path_and_parse_dataset_info,
+    extract_all_participant_ids_from_files,
+    get_cloud_csv_contents_as_dict,
+    load_participant_to_sample_mapping,
+    create_calculated_age_diagnosis_table_data,
+)
 from workspace.workspace_manager import WorkspaceManager
 
 logging.basicConfig(
