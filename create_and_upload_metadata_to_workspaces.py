@@ -43,6 +43,7 @@ from utilities import (
     create_calculated_age_diagnosis_table_data,
 )
 from validation.dataset_validator import DatasetValidator
+from validation.participant_validator import ParticipantValidation
 from workspace.workspace_manager import WorkspaceManager
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
 from transformation.genomics_file_checker import GenomicsFileChecker
@@ -125,10 +126,6 @@ def process_main_workspace(
             unique_patient_ids=participant_ids
         )
     )
-
-    print(table_data.get("biomarker_table"))
-    print(table_data.get("calculated_age_diagnosis_table"))
-
 
     logging.info(f"Built master sequencing files table data with {len(participant_files)} participants")
     if dry_run:
@@ -315,13 +312,18 @@ def main():
     )
     
     # Initialize components
-    validator = DatasetValidator()
+    dataset_validator = DatasetValidator()
     token = Token()
     request_util = RunRequest(token=token)
 
     # Validate all datasets
-    if not validator.validate_all(dataset_info):
+    if not dataset_validator.validate_all(dataset_info):
         logging.error("Dataset validation failed. Exiting.")
+        exit(1)
+
+    participant_validator = ParticipantValidation(dataset_info=dataset_info, workspace_scope=workspace_scope)
+    if not participant_validator.run():
+        logging.error("Participant validation failed. Exiting.")
         exit(1)
 
     # Initialize the workspace manager object
