@@ -40,9 +40,9 @@ from utilities import (
     get_expected_main_table_names,
     get_expected_sub_table_names,
     load_participant_to_sample_mapping,
-    create_calculated_age_diagnosis_table_data,
 )
 from validation.dataset_validator import DatasetValidator
+from validation.participant_validator import ParticipantValidation
 from workspace.workspace_manager import WorkspaceManager
 from transformation.table_data_utils import convert_csv_rows_to_table_data, create_sequencing_files_table_data
 from transformation.genomics_file_checker import GenomicsFileChecker
@@ -79,7 +79,6 @@ def process_main_workspace(
     terra_workspace_obj: TerraWorkspace,
     workspace_manager: WorkspaceManager,
     participant_files: dict[str, dict[str, Optional[str]]],
-    participant_ids: set[str],
     dataset_notes: Optional[str] = None,
     dry_run: bool = False,
 ) -> None:
@@ -95,7 +94,6 @@ def process_main_workspace(
         workspace_manager: WorkspaceManager instance used for setting description and column order
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
-        participant_ids: Set of all participant IDs
         dataset_notes: Optional workspace description string to set.
         dry_run: If True, log what would be uploaded without actually uploading.
     """
@@ -117,19 +115,6 @@ def process_main_workspace(
             participant_files=participant_files,
         )
     )
-
-    # Add the calculated age at diagnosis table, which is derived from other existing columns
-    table_data.update(
-        create_calculated_age_diagnosis_table_data(
-            file_contents_map=dataset_info.main_file_contents_map,
-            unique_patient_ids=participant_ids
-        )
-    )
-
-    print(table_data.get("biomarker_table"))
-    print(table_data.get("calculated_age_diagnosis_table"))
-
-
     logging.info(f"Built master sequencing files table data with {len(participant_files)} participants")
     if dry_run:
         logging.info(
@@ -159,8 +144,7 @@ def process_sub_workspaces(
 
     Args:
         dataset_info: Dataset information
-        sub_workspace_metadata: List of dictionaries with sub workspace name, participant set,
-            the TerraWorkspace object, and a set of all patient_id records
+        sub_workspace_metadata: List of dictionaries with sub workspace name, participant set, and TerraWorkspace object
         workspace_manager_obj: WorkspaceManager instance
         all_participant_files: Full dict of participant_id -> {file_type: path_or_None}
                                as returned by GenomicsFileChecker.check_all_participants().
@@ -207,13 +191,6 @@ def process_sub_workspaces(
                     convert_csv_rows_to_table_data(
                         csv_path=csv_file_path,
                         file_contents=file_contents,
-                    )
-                )
-                # Add the calculated age at diagnosis table, which is derived from other existing columns
-                table_data.update(
-                    create_calculated_age_diagnosis_table_data(
-                        file_contents_map=sub_dataset.file_contents_map,
-                        unique_patient_ids=ws_meta["patient_ids"],
                     )
                 )
 
@@ -313,15 +290,20 @@ def main():
         gcp=gcp,
         sub_workspaces_filter=sub_workspaces_filter,
     )
-    
+
     # Initialize components
-    validator = DatasetValidator()
+    dataset_validator = DatasetValidator()
     token = Token()
     request_util = RunRequest(token=token)
 
     # Validate all datasets
-    if not validator.validate_all(dataset_info):
+    if not dataset_validator.validate_all(dataset_info):
         logging.error("Dataset validation failed. Exiting.")
+        exit(1)
+
+    participant_validator = ParticipantValidation(dataset_info=dataset_info, workspace_scope=workspace_scope)
+    if not participant_validator.run():
+        logging.error("Participant validation failed. Exiting.")
         exit(1)
 
     # Initialize the workspace manager object
@@ -419,7 +401,6 @@ def main():
                         "workspace_name": sub_dataset.workspace_name,
                         "participants": sub_participants,
                         "sub_workspace_terra_obj": sub_workspace_terra_obj,
-                        "patient_ids": sub_participants
                     }
                 )
                 logging.info(f"Workspace '{sub_dataset.workspace_name}' has {len(sub_participants)} participants — all present in main")
@@ -481,7 +462,6 @@ def main():
             workspace_manager=workspace_manager,
             participant_files=all_participant_files,
             dataset_notes=dataset_notes,
-            participant_ids=participants_to_check,
             dry_run=dry_run,
         )
 
