@@ -74,36 +74,30 @@ class ParticipantPostValidation:
         self.dataset_info = dataset_info
         self.workspace_scope = workspace_scope
 
-    def _build_enrollment_status_map(self) -> dict[str, dict[str, str]]:
+    def _build_enrollment_status_map(
+        self, file_contents_map: dict, workspace_name: str
+    ) -> dict[str, dict[str, str]]:
         """
-        Build a mapping of patient_id -> enrollment status fields by scanning
-        every copy of patient_enrollment_status.csv found in main and sub datasets.
-
-        The file headers are: patient_id, role_user_status, step.
-        All string values are lowercased so comparisons are case-insensitive.
-
+        Build a patient_id -> enrollment status mapping from a single workspace's
+        file contents map (main or one sub dataset).  Only rows from that workspace's
+        own patient_enrollment_status.csv are included, so each workspace is validated
+        against its own copy of the file rather than a merged global map.
         """
         enrollment_map: dict[str, dict[str, str]] = {}
 
-        # Search the main dataset first, then each sub dataset in order
-        sources = [self.dataset_info.main_file_contents_map] + [
-            sd.file_contents_map for sd in self.dataset_info.sub_datasets
-        ]
-        for file_contents_map in sources:
-            for file_path, rows in file_contents_map.items():
-                # Only process the enrollment status file; skip all others
-                if Path(file_path).name == self.ENROLLMENT_STATUS_FILE:
-                    for row in rows:
-                        patient_id = row.get("patient_id", "").strip()
-                        # The first occurrence for each patient_id is authoritative
-                        if patient_id and patient_id not in enrollment_map:
-                            enrollment_map[patient_id] = {
-                                "role_user_status": row.get("role_user_status", "").strip().lower(),
-                                "step": row.get("step", "").strip().lower(),
-                            }
+        for file_path, rows in file_contents_map.items():
+            if Path(file_path).name == self.ENROLLMENT_STATUS_FILE:
+                for row in rows:
+                    patient_id = row.get("patient_id", "").strip()
+                    if patient_id and patient_id not in enrollment_map:
+                        enrollment_map[patient_id] = {
+                            "role_user_status": row.get("role_user_status", "").strip().lower(),
+                            "step": row.get("step", "").strip().lower(),
+                        }
+                break  # only one enrollment file per workspace
 
         logging.info(
-            f"Built enrollment status map for {len(enrollment_map)} participant(s) "
+            f"[{workspace_name}] Built enrollment status map for {len(enrollment_map)} participant(s) "
             f"from '{self.ENROLLMENT_STATUS_FILE}'"
         )
         return enrollment_map
@@ -129,7 +123,7 @@ class ParticipantPostValidation:
             if participant_id not in enrollment_map:
                 # Participant present in a CSV but missing from the enrollment file entirely
                 logging.error(
-                    f"{context}Participant '{participant_id}' not found in "
+                    f"{context} participant '{participant_id}' not found in "
                     f"'{self.ENROLLMENT_STATUS_FILE}'"
                 )
                 failed.append(participant_id)
@@ -144,7 +138,7 @@ class ParticipantPostValidation:
 
             if role_status != self.EXPECTED_STATUS or enrollment_status != self.EXPECTED_ENROLLMENT_STATUS:
                 logging.error(
-                    f"{context}Participant '{participant_id}' has unexpected enrollment status — "
+                    f"{context} participant '{participant_id}' has unexpected enrollment status — "
                     f"role_user_status='{role_status}' (expected '{self.EXPECTED_STATUS}'), "
                     f"step='{enrollment_status}' (expected '{self.EXPECTED_ENROLLMENT_STATUS}')"
                 )
@@ -193,7 +187,9 @@ class ParticipantPostValidation:
         """
         Execute all post-validation checks in sequence.
 
-        Checks stop on the first failure to avoid surfacing misleading downstream
+        Checks stop on the first failure to avoid surfacing misleading downstream results.
+        Each workspace's participants are validated against that workspace's own copy of
+        patient_enrollment_status.csv rather than a merged global map.
         """
         logging.info(f"Starting post-validation (workspace_scope='{self.workspace_scope}')")
 
@@ -210,27 +206,34 @@ class ParticipantPostValidation:
                 logging.error("Sub workspace participant check failed — skipping enrollment status check (contents match not performed)")
                 return False
 
-        # Build the enrollment status map once; reused for all later checks.
-        enrollment_map = self._build_enrollment_status_map()
-        if not enrollment_map:
-            logging.error(f"No enrollment data found in '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
-            return False
-
-        # Validate that all main dataset participants are active and enrolled.
+        # Validate main dataset participants against the main workspace's own enrollment file.
         if self.workspace_scope in (ALL, MAIN):
+            enrollment_map = self._build_enrollment_status_map(
+                file_contents_map=self.dataset_info.main_file_contents_map,
+                workspace_name="Main",
+            )
+            if not enrollment_map:
+                logging.error(f"No enrollment data found in main dataset '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
+                return False
             logging.info("Validating enrollment status for main dataset participants")
             if not self._validate_participants_active_and_enrolled(main_participants, enrollment_map, context="Main"):
                 logging.error("Main dataset enrollment validation failed — contents match check not performed")
                 return False
 
-        # Validate that each sub dataset's participants are active and enrolled.
+        # Validate each sub dataset's participants against that sub workspace's own enrollment file.
         if self.workspace_scope in (ALL, SUB):
             for sub_dataset in self.dataset_info.sub_datasets:
-                context = sub_dataset.workspace_name
                 sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
-                logging.info(f"Validating enrollment status for sub workspace '{context}' ({len(sub_participants)} participant(s))")
-                if not self._validate_participants_active_and_enrolled(sub_participants, enrollment_map, context=context):
-                    logging.error(f"Enrollment validation failed for sub workspace '{context}' — contents match check not performed")
+                enrollment_map = self._build_enrollment_status_map(
+                    file_contents_map=sub_dataset.file_contents_map,
+                    workspace_name=sub_dataset.workspace_name,
+                )
+                if not enrollment_map:
+                    logging.error(f"No enrollment data found in '{sub_dataset.workspace_name}' '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
+                    return False
+                logging.info(f"Validating enrollment status for sub workspace '{sub_dataset.workspace_name}' ({len(sub_participants)} participant(s))")
+                if not self._validate_participants_active_and_enrolled(sub_participants, enrollment_map, context=sub_dataset.workspace_name):
+                    logging.error(f"Enrollment validation failed for sub workspace '{sub_dataset.workspace_name}' — contents match check not performed")
                     return False
 
         logging.info("All post-validation checks passed successfully")
