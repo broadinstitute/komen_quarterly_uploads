@@ -39,7 +39,8 @@ def format_workspace_name(project_name: str, date_created: str, researcher_id: i
 def parse_csv_paths_to_dataset_info(
     all_csv_paths: list[str],
     gcp: GCPCloudFunctions,
-    sub_workspaces_filter: Optional[list[str]] = None,
+    include_workspaces: Optional[list[str]] = None,
+    exclude_workspaces: Optional[list[str]] = None,
 ) -> DatasetInfo:
     """
     Parse a list of CSV file paths into a DatasetInfo structure.
@@ -51,10 +52,12 @@ def parse_csv_paths_to_dataset_info(
     Args:
         all_csv_paths: Full list of GCS paths to process.
         gcp: Shared GCPCloudFunctions instance.
-        sub_workspaces_filter: Optional list of sub workspace names to include.
-            When provided, any sub dataset whose derived workspace_name is not in
-            this list is silently skipped.  If the list contains names that did not
-            match any sub dataset an error is logged and a ValueError is raised.
+        include_workspaces: Optional list of sub workspace names to include.
+            When provided, only sub datasets whose derived workspace_name appears in
+            this list are kept. Any name not matched raises a ValueError.
+        exclude_workspaces: Optional list of sub workspace names to skip entirely.
+            Any workspace in this list is excluded before any validation or upload.
+            A warning is logged for any name in the list that was not found.
     """
     # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
     main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
@@ -89,7 +92,8 @@ def parse_csv_paths_to_dataset_info(
                 sub_datasets_dict[key]["contents"][file_path] = contents_as_list
 
     sub_datasets = []
-    found_filtered_names: list[str] = []  # tracks which filter names were actually matched
+    found_include_names: list[str] = []   # tracks which include_workspaces names were matched
+    found_exclude_names: set[str] = set() # tracks which exclude_workspaces names were matched
 
     for (researcher_id, project_id), data in sub_datasets_dict.items():
         project_name = None
@@ -119,11 +123,17 @@ def parse_csv_paths_to_dataset_info(
                 f"project_name={project_name!r}, date_created={date_created!r}"
             )
 
-        # If a filter is active, skip sub datasets that are not in it
-        if sub_workspaces_filter is not None:
-            if workspace_name not in sub_workspaces_filter:
+        # Skip workspaces explicitly excluded by the caller
+        if exclude_workspaces and workspace_name in exclude_workspaces:
+            found_exclude_names.add(workspace_name)
+            logging.info(f"Excluding sub workspace '{workspace_name}' as requested")
+            continue
+
+        # If an include list is active, skip sub datasets not in it
+        if include_workspaces is not None:
+            if workspace_name not in include_workspaces:
                 continue
-            found_filtered_names.append(workspace_name)
+            found_include_names.append(workspace_name)
 
         sub_datasets.append(SubDatasetInfo(
             files=data["files"],
@@ -135,9 +145,17 @@ def parse_csv_paths_to_dataset_info(
             workspace_name=workspace_name,
         ))
 
-    # If a filter was used, check that every requested name was actually found
-    if sub_workspaces_filter is not None:
-        not_found = [name for name in sub_workspaces_filter if name not in found_filtered_names]
+    # Warn about any excluded workspace names that were not actually found in the dataset
+    if exclude_workspaces:
+        for name in exclude_workspaces:
+            if name not in found_exclude_names:
+                logging.warning(
+                    f"Excluded workspace '{name}' was not found in the dataset — check the workspace name"
+                )
+
+    # If an include list was used, error if any requested name was not found
+    if include_workspaces is not None:
+        not_found = [name for name in include_workspaces if name not in found_include_names]
         if not_found:
             for name in not_found:
                 logging.error(f"Requested sub workspace '{name}' was not found in the dataset")
@@ -155,11 +173,17 @@ def parse_csv_paths_to_dataset_info(
 def list_bucket_path_and_parse_dataset_info(
     bucket: str,
     gcp: GCPCloudFunctions,
-    sub_workspaces_filter: Optional[list[str]] = None,
+    include_workspaces: Optional[list[str]] = None,
+    exclude_workspaces: Optional[list[str]] = None,
 ) -> DatasetInfo:
     blob_metadata = gcp.list_bucket_contents(bucket_name=bucket, file_extensions_to_include=[".csv"], file_name_only=True)
     all_csv_paths = [a["path"] for a in blob_metadata]
-    dataset_info = parse_csv_paths_to_dataset_info(all_csv_paths, gcp, sub_workspaces_filter=sub_workspaces_filter)
+    dataset_info = parse_csv_paths_to_dataset_info(
+        all_csv_paths,
+        gcp,
+        include_workspaces=include_workspaces,
+        exclude_workspaces=exclude_workspaces,
+    )
     return dataset_info
 
 
@@ -232,34 +256,44 @@ def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> l
     return list(reader)
 
 
-def get_expected_main_table_names(main_dataset_files: list[str]) -> list[str]:
+def get_expected_main_table_names(
+    main_dataset_files: list[str],
+    file_contents_map: dict[str, list],
+) -> list[str]:
     """
     Compute the expected Terra table names for the main workspace.
 
-    Every main CSV file produces one table named ``{stem}_table``.
-    The sequencing_files_table is always appended because the main workspace
-    always receives genomics file data.
+    Every main CSV file with at least one data row produces one table named ``{stem}_table``.
+    CSVs that contain only a header (no data rows) are excluded — no table is created for them.
+    The sequencing_files_table and calculated_age_diagnosis_table are always appended.
     """
-    # Each CSV file maps to a table named after its stem (e.g. demographics.csv → demographics_table)
-    tables = [f"{Path(f).stem}_table" for f in main_dataset_files]
-    # The sequencing files table is always present in the main workspace
+    tables = [
+        f"{Path(f).stem}_table"
+        for f in main_dataset_files
+        if file_contents_map.get(f)  # exclude CSVs with no data rows
+    ]
     tables.append("sequencing_files_table")
     # The "calculated_age_diagnosis_table" should always be present, but is a constructed table and doesn't come from a CSV
     tables.append("calculated_age_diagnosis_table")
     return tables
 
 
-def get_expected_sub_table_names(sub_files: list[str], has_genomics_access: bool) -> list[str]:
+def get_expected_sub_table_names(
+    sub_files: list[str],
+    file_contents_map: dict[str, list],
+    has_genomics_access: bool,
+) -> list[str]:
     """
     Compute the expected Terra table names for a sub workspace.
 
-    The sequencing_files_table is included only when the researcher has been granted
-    genomics file access.
+    CSVs listed in MAIN_ONLY_CSVS and CSVs with no data rows are excluded.
+    The sequencing_files_table is included only when the researcher has genomics access.
     """
     tables = [
         f"{Path(f).stem}_table"
         for f in sub_files
         if Path(f).name not in MAIN_ONLY_CSVS
+        and file_contents_map.get(f)  # exclude CSVs with no data rows
     ]
     # The "calculated_age_diagnosis_table" should always be present, but is a constructed table and doesn't come from a CSV
     tables.append("calculated_age_diagnosis_table")

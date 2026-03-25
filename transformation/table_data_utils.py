@@ -43,7 +43,13 @@ def convert_csv_rows_to_table_data(
 
     Each row gets a synthetic row id column named ``{table_name}_id`` whose value
     is the 1-based row number from the source CSV.
+
+    Returns an empty dict if file_contents has no rows so that callers never
+    create or expect a table for a CSV that contains only a header.
     """
+    if not file_contents:
+        return {}
+
     filename = Path(csv_path).name
     table_name = get_table_name(csv_path)
     table_id_column = get_table_id_column(table_name)
@@ -56,7 +62,6 @@ def convert_csv_rows_to_table_data(
                 **normalize_row_for_table_upload(row=row, filename=filename),
             }
         )
-
     return {
         table_name: {
             "table_id_column": table_id_column,
@@ -101,4 +106,3 @@ def create_sequencing_files_table_data(
             "row_data": row_data,
         }
     }
-

@@ -115,10 +115,10 @@ class WorkspaceManager:
         # Check for expected tables that are missing from the workspace
         missing = [t for t in expected_tables if t not in workspace_tables]
         if missing:
-            for t in sorted(missing):
-                logging.error(
-                    f"Workspace '{workspace.workspace_name}': expected table '{t}' is missing"
-                )
+            missing_table_string = ", ".join(missing)
+            logging.warning(
+                f"Workspace '{workspace.workspace_name}': table(s) do not exist: '{missing_table_string}'"
+            )
             return False
 
         # Optionally check for tables in the workspace that were not expected
