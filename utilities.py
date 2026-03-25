@@ -11,6 +11,7 @@ from ops_utils.gcp_utils import GCPCloudFunctions
 from constants import PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
+from transformation.table_data_utils import get_table_id_column
 
 # Matches the dynamic metadata filename, e.g. researcher_id_62_project_id_115_metadata.csv
 _METADATA_FILE_PATTERN = re.compile(r"researcher_id_\d+_project_id_\d+_metadata\.csv$")
@@ -186,6 +187,37 @@ def extract_all_participant_ids_from_files(
     )
     return all_participant_ids
 
+def create_calculated_age_diagnosis_table_data(file_contents_map: dict[str, list], unique_patient_ids: set[str]) -> dict:
+    patient_profile_eligibility_csv = "patient_profile_eligibility.csv"
+    patient_profile_eligibility = next((v for k, v in file_contents_map.items() if k.endswith(patient_profile_eligibility_csv)), [])
+    calculated_age_diagnosis_table_name = "calculated_age_diagnosis_table"
+
+    calculated_age_of_diagnosis_table_data = []
+    current_year = datetime.now().year
+    table_id = get_table_id_column(table_name=calculated_age_diagnosis_table_name)
+    row_counter = 1
+
+    for patient_id in unique_patient_ids:
+        if patient_record := [row for row in patient_profile_eligibility if row.get("patient_id") == patient_id]:
+            year_of_diagnosis = int(patient_record[0]["year_of_first_breast_cancer_diagnosis"])
+            year_of_birth = int(patient_record[0]["date_of_birth"])
+
+            calculated_age_of_diagnosis_table_data.append(
+                {
+                    table_id: str(row_counter),
+                    "patient_id": patient_id,
+                    "time_since_diagnosis": str(current_year - year_of_diagnosis),
+                    "age_at_diagnosis": str(year_of_diagnosis - year_of_birth),
+                    "current_age": str(current_year - year_of_birth),
+                }
+            )
+            row_counter += 1
+    return {
+        calculated_age_diagnosis_table_name: {
+            "table_id_column": table_id,
+            "row_data": calculated_age_of_diagnosis_table_data,
+        }
+    }
 
 def get_cloud_csv_contents_as_dict(cloud_path: str, gcp: GCPCloudFunctions) -> list[dict]:
     """
@@ -212,6 +244,8 @@ def get_expected_main_table_names(main_dataset_files: list[str]) -> list[str]:
     tables = [f"{Path(f).stem}_table" for f in main_dataset_files]
     # The sequencing files table is always present in the main workspace
     tables.append("sequencing_files_table")
+    # The "calculated_age_diagnosis_table" should always be present, but is a constructed table and doesn't come from a CSV
+    tables.append("calculated_age_diagnosis_table")
     return tables
 
 
@@ -227,6 +261,8 @@ def get_expected_sub_table_names(sub_files: list[str], has_genomics_access: bool
         for f in sub_files
         if Path(f).name not in MAIN_ONLY_CSVS
     ]
+    # The "calculated_age_diagnosis_table" should always be present, but is a constructed table and doesn't come from a CSV
+    tables.append("calculated_age_diagnosis_table")
     if has_genomics_access:
         # Sequencing files table is only present in workspaces where the
         # researcher has been granted genomics data access.
