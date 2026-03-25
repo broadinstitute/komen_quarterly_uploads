@@ -64,12 +64,20 @@ def get_args() -> Namespace:
     parser.add_argument("--dataset_notes", "-n", default=None,
                         help="Optional path to a file whose contents will be set as the description on every workspace created")
     parser.add_argument(
-        "--sub_workspaces", "-s",
+        "--include_workspaces", "-i",
         nargs="+",
         help=(
-            "Optional list of sub workspace names to create/upload. "
-            f"Only valid when --workspace_scope is '{SUB}' or '{ALL}'. "
+            "Optional space-separated list of exact sub workspace names to create/upload. "
+            "All other sub workspaces are skipped. "
             "If any name is not found in the dataset an error is raised."
+        ),
+    )
+    parser.add_argument(
+        "--exclude_workspaces", "-e",
+        nargs="+",
+        help=(
+            "Optional space-separated list of exact sub workspace names to skip entirely. "
+            "A warning is logged for any name not found in the dataset."
         ),
     )
     return parser.parse_args()
@@ -298,9 +306,13 @@ def main():
             dataset_notes = f.read()
         logging.info(f"Loaded dataset notes from {args.dataset_notes}")
 
-    sub_workspaces_filter = args.sub_workspaces
-    if sub_workspaces_filter:
-        logging.info(f"Sub workspace filter active — will only process: {sub_workspaces_filter}")
+    include_workspaces = args.include_workspaces
+    if include_workspaces:
+        logging.info(f"Include filter active — will only process: {include_workspaces}")
+
+    exclude_workspaces = args.exclude_workspaces
+    if exclude_workspaces:
+        logging.info(f"Exclude filter active — will skip: {exclude_workspaces}")
 
     # Single shared GCP client used throughout
     gcp = GCPCloudFunctions()
@@ -308,7 +320,8 @@ def main():
     dataset_info = list_bucket_path_and_parse_dataset_info(
         bucket=METADATA_CSVS_BUCKET,
         gcp=gcp,
-        sub_workspaces_filter=sub_workspaces_filter,
+        include_workspaces=include_workspaces,
+        exclude_workspaces=exclude_workspaces,
     )
     
     # Initialize components
@@ -338,20 +351,11 @@ def main():
     main_workspace_terra_obj = None
     if workspace_scope in (ALL, MAIN):
         main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=MAIN_WORKSPACE_NAME)
-        # Copy the "view data" notebook into the main workspace's bucket
-        workspace_manager.copy_notebook_into_workspace_bucket(
-            terra_workspace_object=main_workspace_terra_obj, notebook_location=VIEW_DATA_NOTEBOOK_FILE
-        )
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}
     if workspace_scope in (ALL, SUB):
         sub_workspaces = workspace_manager.create_all_sub_workspaces(dataset_info=dataset_info)
-        # Copy the "view data" notebook into the bucket of each sub workspace
-        for _, sub_workspace_obj in sub_workspaces.items():
-            workspace_manager.copy_notebook_into_workspace_bucket(
-                terra_workspace_object=sub_workspace_obj, notebook_location=VIEW_DATA_NOTEBOOK_FILE
-            )
 
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
     # before deciding whether uploads are needed (avoids falsely flagging missing sequencing_files_table
@@ -362,8 +366,10 @@ def main():
     # Determine which workspaces actually need uploads before doing any heavy processing.
     # A workspace is skipped only if all its expected tables already exist (and --force is not set).
     if workspace_scope in (ALL, MAIN) and not dry_run:
-        # Derive expected table names from the main dataset files using the shared utility
-        main_expected_tables = get_expected_main_table_names(dataset_info.main_dataset_files)
+        main_expected_tables = get_expected_main_table_names(
+            dataset_info.main_dataset_files,
+            file_contents_map=dataset_info.main_file_contents_map,
+        )
         main_needs_upload = not workspace_manager.should_skip_uploads(main_workspace_terra_obj, main_expected_tables, force)
     elif workspace_scope in (ALL, MAIN):
         main_needs_upload = True  # dry_run always proceeds
@@ -377,6 +383,7 @@ def main():
             # Derive expected table names using the shared utility; MAIN_ONLY_CSVS are excluded
             sub_expected_tables = get_expected_sub_table_names(
                 sub_files=sub_dataset.files,
+                file_contents_map=sub_dataset.file_contents_map,
                 has_genomics_access=sub_dataset.researcher_id in researchers_with_genomics_access,
             )
             if not workspace_manager.should_skip_uploads(sub_workspace_terra_obj, sub_expected_tables, force):
@@ -477,6 +484,9 @@ def main():
 
     # Process main workspace
     if workspace_scope in (ALL, MAIN) and main_needs_upload:
+        workspace_manager.copy_notebook_into_workspace_bucket(
+            terra_workspace_object=main_workspace_terra_obj, notebook_location=VIEW_DATA_NOTEBOOK_FILE
+        )
         process_main_workspace(
             dataset_info=dataset_info,
             terra_workspace_obj=main_workspace_terra_obj,
@@ -489,6 +499,10 @@ def main():
 
     # Process sub workspaces
     if workspace_scope in (ALL, SUB) and sub_workspaces_needing_upload:
+        for ws_name in sub_workspaces_needing_upload:
+            workspace_manager.copy_notebook_into_workspace_bucket(
+                terra_workspace_object=sub_workspaces[ws_name], notebook_location=VIEW_DATA_NOTEBOOK_FILE
+            )
         sub_mapping_failures = process_sub_workspaces(
             dataset_info=dataset_info,
             sub_workspace_metadata=sub_workspace_metadata,

@@ -365,12 +365,20 @@ def get_args() -> Namespace:
         help=f"Which workspaces to validate: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only",
     )
     parser.add_argument(
-        "--sub_workspaces", "-s",
+        "--include_workspaces", "-i",
         nargs="+",
         help=(
-            "Optional list of sub workspace names to validate. "
-            f"Only valid when --workspace_scope is '{SUB}' or '{ALL}'. "
+            "Optional space-separated list of exact sub workspace names to validate. "
+            "All other sub workspaces are skipped. "
             "If any name is not found in the dataset an error is raised."
+        ),
+    )
+    parser.add_argument(
+        "--exclude_workspaces", "-e",
+        nargs="+",
+        help=(
+            "Optional space-separated list of exact sub workspace names to skip validation entirely. "
+            "A warning is logged for any name not found in the dataset."
         ),
     )
     return parser.parse_args()
@@ -382,15 +390,20 @@ if __name__ == '__main__':
     token = Token()
     request_util = RunRequest(token=token)
 
-    sub_workspaces_filter = args.sub_workspaces
-    if sub_workspaces_filter:
-        logging.info(f"Sub workspace filter active — will only validate: {sub_workspaces_filter}")
+    include_workspaces = args.include_workspaces
+    if include_workspaces:
+        logging.info(f"Include filter active — will only validate: {include_workspaces}")
+
+    exclude_workspaces = args.exclude_workspaces
+    if exclude_workspaces:
+        logging.info(f"Exclude filter active — will skip: {exclude_workspaces}")
 
     # Step 1: Download all CSV file paths and their contents
     dataset_info = list_bucket_path_and_parse_dataset_info(
         bucket=METADATA_CSVS_BUCKET,
         gcp=gcp_client,
-        sub_workspaces_filter=sub_workspaces_filter,
+        include_workspaces=include_workspaces,
+        exclude_workspaces=exclude_workspaces,
     )
 
     # Step 2: Initialise Terra API clients and build TerraWorkspace objects for the already-existing workspaces.
