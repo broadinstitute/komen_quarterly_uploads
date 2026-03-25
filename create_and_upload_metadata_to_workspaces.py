@@ -26,7 +26,10 @@ from constants import (
     RESEARCHER_ID_TO_EMAIL_MAPPING,
     GENOMICS_FILE_ACCESS_GROUP_NAME,
     RESEARCH_ADMIN_GROUP_EMAIL,
-    MAIN, SUB, ALL
+    MAIN,
+    SUB,
+    ALL,
+    VIEW_DATA_NOTEBOOK_FILE
 )
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo
@@ -325,6 +328,7 @@ def main():
     workspace_manager = WorkspaceManager(
         request_util=request_util,
         billing_project=BILLING_PROJECT,
+        gcp_util=gcp,
         dry_run=dry_run,
     )
 
@@ -332,11 +336,20 @@ def main():
     main_workspace_terra_obj = None
     if workspace_scope in (ALL, MAIN):
         main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=MAIN_WORKSPACE_NAME)
+        # Copy the "view data" notebook into the main workspace's bucket
+        workspace_manager.copy_notebook_into_workspace_bucket(
+            terra_workspace_object=main_workspace_terra_obj, notebook_location=VIEW_DATA_NOTEBOOK_FILE
+        )
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}
     if workspace_scope in (ALL, SUB):
         sub_workspaces = workspace_manager.create_all_sub_workspaces(dataset_info=dataset_info)
+        # Copy the "view data" notebook into the bucket of each sub workspace
+        for _, sub_workspace_obj in sub_workspaces.items():
+            workspace_manager.copy_notebook_into_workspace_bucket(
+                terra_workspace_object=sub_workspace_obj, notebook_location=VIEW_DATA_NOTEBOOK_FILE
+            )
 
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
     # before deciding whether uploads are needed (avoids falsely flagging missing sequencing_files_table

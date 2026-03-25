@@ -2,12 +2,14 @@
 
 import logging
 import re
+from pathlib import Path
 
+from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
 from constants import BILLING_PROJECT
-from models.data_models import DatasetInfo, SubDatasetInfo
+from models.data_models import DatasetInfo
 from transformation.column_order import TABLE_COLUMN_ORDER
 
 
@@ -18,7 +20,10 @@ class WorkspaceManager:
     """Manages Terra workspace creation and data upload operations."""
 
     def __init__(
-            self, request_util: RunRequest, billing_project: str, dry_run: bool = False
+            self,
+            request_util: RunRequest,
+            billing_project: str,
+            gcp_util: GCPCloudFunctions,  dry_run: bool = False
     ):
         """
         Initialize WorkspaceManager.
@@ -31,6 +36,7 @@ class WorkspaceManager:
         self.request_util = request_util
         self.billing_project = billing_project
         self.dry_run = dry_run
+        self.gcp_util = gcp_util
 
     def set_workspace_description(self, workspace: TerraWorkspace, description: str) -> None:
         """
@@ -206,3 +212,10 @@ class WorkspaceManager:
             workspaces[sub_workspace.workspace_name] = sub_workspace
         logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
         return workspaces
+
+    def copy_notebook_into_workspace_bucket(self, terra_workspace_object: TerraWorkspace, notebook_location: str) -> None:
+        logging.info("Copying notebook into destination workspace bucket")
+        bucket = terra_workspace_object.get_workspace_bucket()
+        notebook_file_name = Path(notebook_location).name
+        dest_path = f"gs://{bucket}/notebooks/{notebook_file_name}"
+        self.gcp_util.copy_cloud_file(src_cloud_path=notebook_location, full_destination_path=dest_path)

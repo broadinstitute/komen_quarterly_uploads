@@ -26,6 +26,7 @@ GENOMICS_FILE_ACCESS_CSV = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/
 # Researcher email to ID mapping
 # Located in workspace: SFC-Research/ShareForCures Operational Data Files
 RESEARCHER_ID_TO_EMAIL_MAPPING = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/researcher_mapping/all_researchers.csv"
+VIEW_DATA_NOTEBOOK_FILE = "gs://fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f/notebooks/View_data.ipynb"
 GENOMICS_FILE_ACCESS_GROUP_NAME = "Genomics-Files-Access"
 RESEARCH_ADMIN_GROUP_EMAIL = "Research-Admins@firecloud.org"
 
