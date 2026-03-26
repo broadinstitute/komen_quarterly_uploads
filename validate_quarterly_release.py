@@ -28,6 +28,7 @@ from constants import (
     MAIN_WORKSPACE_NAME,
     GENOMICS_FILE_ACCESS_CSV,
     GENOMICS_BUCKET,
+    VIEW_DATA_NOTEBOOK_FILE,
     MAIN,
     SUB,
     ALL
@@ -159,7 +160,7 @@ class TerraTablePostValidation:
     def _validate_workspace_tables(
         workspace: TerraWorkspace,
         expected_tables: list[str],
-        context: str,
+        workspace_name: str,
     ) -> bool:
         """
         Validate that a workspace contains exactly the expected tables.
@@ -167,7 +168,7 @@ class TerraTablePostValidation:
         Uses WorkspaceManager.workspace_has_all_tables with check_no_extra=True so
         both missing and unexpected extra tables are caught and logged.
         """
-        logging.info(f"[{context}] Validating {len(expected_tables)} expected table(s): {sorted(expected_tables)}")
+        logging.info(f"[{workspace_name}] Validating {len(expected_tables)} expected table(s): {sorted(expected_tables)}")
         return WorkspaceManager.workspace_has_all_tables(
             workspace=workspace,
             expected_tables=expected_tables,
@@ -179,7 +180,7 @@ class TerraTablePostValidation:
         workspace: TerraWorkspace,
         table_name: str,
         expected_rows: list[dict],
-        context: str,
+        workspace_name: str,
     ) -> bool:
         """
         Compare expected rows for any Terra table against what is actually stored in Terra.
@@ -224,29 +225,45 @@ class TerraTablePostValidation:
 
         if missing:
             logging.error(
-                f"[{context}] {table_name}: "
+                f"[{workspace_name}] {table_name}: "
                 f"{len(missing)} expected row(s) not found in Terra workspace"
             )
             for row_fs in sorted(missing, key=lambda fs: dict(fs).get("participant_id", "")):
                 logging.error(
-                    f"[{context}] {table_name} missing row: {expected_key_to_row[row_fs]}"
+                    f"[{workspace_name}] {table_name} missing row: {expected_key_to_row[row_fs]}"
                 )
         if extra:
             logging.error(
-                f"[{context}] {table_name}: "
+                f"[{workspace_name}] {table_name}: "
                 f"{len(extra)} unexpected extra row(s) found in Terra workspace"
             )
             for row_fs in sorted(extra, key=lambda fs: dict(fs).get("participant_id", "")):
                 logging.error(
-                    f"[{context}] {table_name} extra row: {actual_key_to_row[row_fs]}"
+                    f"[{workspace_name}] {table_name} extra row: {actual_key_to_row[row_fs]}"
                 )
 
         if missing or extra:
             return False
 
         logging.info(
-            f"[{context}] {table_name}: {len(expected_rows)} row(s) validated"
+            f"[{workspace_name}] {table_name}: {len(expected_rows)} row(s) validated"
         )
+        return True
+
+    def _validate_notebook_exists(self, workspace: TerraWorkspace, workspace_name: str) -> bool:
+        """
+        Verify the view-data notebook was copied into the workspace bucket.
+
+        The notebook is expected at gs://{workspace_bucket}/notebooks/{notebook_filename},
+        matching the path used by WorkspaceManager.copy_notebook_into_workspace_bucket.
+        """
+        notebook_filename = Path(VIEW_DATA_NOTEBOOK_FILE).name
+        bucket = workspace.get_workspace_bucket()
+        expected_path = f"gs://{bucket}/notebooks/{notebook_filename}"
+        if not self.gcp_obj.check_file_exists(expected_path):
+            logging.error(f"[{workspace_name}] Notebook not found at expected path: {expected_path}")
+            return False
+        logging.info(f"[{workspace_name}] Notebook exists at {expected_path}")
         return True
 
     def run(self) -> bool:
@@ -282,7 +299,7 @@ class TerraTablePostValidation:
             if not self._validate_workspace_tables(
                 workspace=self.main_workspace,
                 expected_tables=expected_main_tables,
-                context="Main",
+                workspace_name="Main",
             ):
                 logging.error("Main workspace table validation failed — stopping post-validation")
                 return False
@@ -295,12 +312,17 @@ class TerraTablePostValidation:
                     workspace=self.main_workspace,
                     table_name=table_name,
                     expected_rows=expected_rows,
-                    context="Main",
+                    workspace_name="Main",
                 ):
                     logging.error(f"Main workspace '{table_name}' content validation failed — stopping post-validation")
                     return False
 
             logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
+
+            # Step 3: verify the notebook was copied into the workspace bucket
+            if not self._validate_notebook_exists(self.main_workspace, workspace_name="Main"):
+                logging.error("Main workspace notebook validation failed — stopping post-validation")
+                return False
 
         # Validate each sub workspace
         if self.workspace_scope in (ALL, SUB):
@@ -332,7 +354,7 @@ class TerraTablePostValidation:
                 if not self._validate_workspace_tables(
                     workspace=sub_workspace_obj,
                     expected_tables=expected_sub_tables,
-                    context=workspace_name,
+                    workspace_name=workspace_name,
                 ):
                     logging.error(f"Sub workspace '{workspace_name}' table validation failed — stopping post-validation")
                     return False
@@ -344,12 +366,17 @@ class TerraTablePostValidation:
                         workspace=sub_workspace_obj,
                         table_name=table_name,
                         expected_rows=expected_rows,
-                        context=workspace_name,
+                        workspace_name=workspace_name,
                     ):
                         logging.error(f"Sub workspace '{workspace_name}' '{table_name}' content validation failed — stopping post-validation")
                         return False
 
-                logging.info("Sub workspace '{workspace_name}' validated successfully ({len(expected_sub_tables)} table(s))")
+                logging.info(f"Sub workspace '{workspace_name}' validated successfully ({len(expected_sub_tables)} table(s))")
+
+                # Step 3: verify the notebook was copied into the workspace bucket
+                if not self._validate_notebook_exists(sub_workspace_obj, workspace_name=workspace_name):
+                    logging.error(f"Sub workspace '{workspace_name}' notebook validation failed — stopping post-validation")
+                    return False
 
         logging.info("All Terra table post-validation checks passed successfully")
         return True
