@@ -68,7 +68,7 @@ class ParticipantValidation:
         self,
         participant_ids: set[str],
         enrollment_map: dict[str, dict[str, str]],
-        context: str,
+        workspace_name: str,
     ) -> bool:
         """
         Verify that every participant ID in participant_ids is active and enrolled.
@@ -85,7 +85,7 @@ class ParticipantValidation:
             if participant_id not in enrollment_map:
                 # Participant present in a CSV but missing from the enrollment file entirely
                 logging.error(
-                    f"{context} participant '{participant_id}' not found in "
+                    f"{workspace_name} participant '{participant_id}' not found in "
                     f"'{self.ENROLLMENT_STATUS_FILE}'"
                 )
                 failed.append(participant_id)
@@ -100,18 +100,18 @@ class ParticipantValidation:
 
             if role_status != self.EXPECTED_STATUS or enrollment_status != self.EXPECTED_ENROLLMENT_STATUS:
                 logging.error(
-                    f"{context} participant '{participant_id}' has unexpected enrollment status — "
+                    f"{workspace_name} participant '{participant_id}' has unexpected enrollment status — "
                     f"role_user_status='{role_status}' (expected '{self.EXPECTED_STATUS}'), "
                     f"step='{enrollment_status}' (expected '{self.EXPECTED_ENROLLMENT_STATUS}')"
                 )
                 failed.append(participant_id)
 
         if failed:
-            logging.error(f"{context}: {len(failed)} participant(s) failed enrollment validation")
+            logging.error(f"{workspace_name}: {len(failed)} participant(s) failed enrollment validation")
             return False
 
         logging.info(
-            f"{context}: All {len(participant_ids)} participant(s) are "
+            f"{workspace_name}: All {len(participant_ids)} participant(s) are "
             f"'{self.EXPECTED_STATUS}' and '{self.EXPECTED_ENROLLMENT_STATUS}'"
         )
         return True
@@ -178,7 +178,7 @@ class ParticipantValidation:
                 logging.error(f"No enrollment data found in main dataset '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
                 return False
             logging.info("Validating enrollment status for main dataset participants")
-            if not self._validate_participants_active_and_enrolled(main_participants, enrollment_map, context="Main"):
+            if not self._validate_participants_active_and_enrolled(main_participants, enrollment_map, workspace_name="Main"):
                 logging.error("Main dataset enrollment validation failed — contents match check not performed")
                 return False
 
@@ -194,7 +194,7 @@ class ParticipantValidation:
                     logging.error(f"No enrollment data found in '{sub_dataset.workspace_name}' '{self.ENROLLMENT_STATUS_FILE}' — cannot validate participant status")
                     return False
                 logging.info(f"Validating enrollment status for sub workspace '{sub_dataset.workspace_name}' ({len(sub_participants)} participant(s))")
-                if not self._validate_participants_active_and_enrolled(sub_participants, enrollment_map, context=sub_dataset.workspace_name):
+                if not self._validate_participants_active_and_enrolled(sub_participants, enrollment_map, workspace_name=sub_dataset.workspace_name):
                     logging.error(f"Enrollment validation failed for sub workspace '{sub_dataset.workspace_name}' — contents match check not performed")
                     return False
 
