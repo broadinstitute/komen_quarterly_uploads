@@ -3,7 +3,6 @@
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest

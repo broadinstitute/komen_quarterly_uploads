@@ -474,8 +474,7 @@ if __name__ == '__main__':
     )
     if not participant_validator.run():
         logging.error("Participant post-validation failed.")
-        # TODO comment this back in
-        #exit(1)
+        exit(1)
 
     # Step 5: Load the participant-to-sample mapping and run Terra
     # table post-validation.
