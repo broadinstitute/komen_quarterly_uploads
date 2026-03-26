@@ -151,7 +151,7 @@ class WorkspaceManager:
         Returns:
             List of row dicts, one per entity in the table.
         """
-        return workspace.get_flat_list_of_table_entity(entity_type=table_name)
+        return workspace.get_flat_list_of_table_entity(entity_type=table_name, verbose=False)
 
     def should_skip_uploads(self, workspace: TerraWorkspace, expected_tables: list[str], force: bool) -> bool:
         """
