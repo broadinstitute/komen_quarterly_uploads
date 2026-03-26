@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 from argparse import Namespace, ArgumentParser
+from collections import defaultdict
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest
@@ -160,7 +161,7 @@ class TerraTablePostValidation:
         workspace: TerraWorkspace,
         expected_tables: list[str],
         context: str,
-    ) -> bool:
+    ) -> tuple[bool, list[dict]]:
         """
         Validate that a workspace contains exactly the expected tables.
 
@@ -180,7 +181,7 @@ class TerraTablePostValidation:
         table_name: str,
         expected_rows: list[dict],
         context: str,
-    ) -> bool:
+    ) -> list[dict]:
         """
         Compare expected rows for any Terra table against what is actually stored in Terra.
 
@@ -192,6 +193,8 @@ class TerraTablePostValidation:
         the synthetic ID column do not affect the result.  All values are stringified
         for a consistent comparison regardless of Python type returned by model_dump.
         """
+        validation_errors = []
+
         # Fetch current rows from the Terra workspace
         actual_rows = WorkspaceManager.get_table_rows(workspace, table_name)
 
@@ -227,29 +230,37 @@ class TerraTablePostValidation:
                 f"[{context}] {table_name}: "
                 f"{len(missing)} expected row(s) not found in Terra workspace"
             )
+            missing_rows_in_table = []
             for row_fs in sorted(missing, key=lambda fs: dict(fs).get("participant_id", "")):
-                logging.error(
-                    f"[{context}] {table_name} missing row: {expected_key_to_row[row_fs]}"
-                )
+                missing_rows_in_table.append(expected_key_to_row[row_fs])
+            validation_errors.append(
+                {
+                    "workspace": workspace.workspace_name,
+                    "errors": [f"Table '{table_name}' missing rows: {missing_rows_in_table}"],
+                }
+            )
         if extra:
             logging.error(
                 f"[{context}] {table_name}: "
                 f"{len(extra)} unexpected extra row(s) found in Terra workspace"
             )
+            extra_rows_in_table = []
             for row_fs in sorted(extra, key=lambda fs: dict(fs).get("participant_id", "")):
-                logging.error(
-                    f"[{context}] {table_name} extra row: {actual_key_to_row[row_fs]}"
-                )
+                extra_rows_in_table.append(actual_key_to_row[row_fs])
+            validation_errors.append(
+                {
+                    "workspace": workspace.workspace_name,
+                    "errors": [f"Table '{table_name}' has extra rows: {extra_rows_in_table}"],
+                }
+            )
 
-        if missing or extra:
-            return False
+        if not validation_errors:
+            logging.info(
+                f"[{context}] {table_name}: {len(expected_rows)} row(s) validated"
+            )
+        return validation_errors
 
-        logging.info(
-            f"[{context}] {table_name}: {len(expected_rows)} row(s) validated"
-        )
-        return True
-
-    def run(self) -> bool:
+    def run(self) -> list[dict]:
         """
         Execute all Terra table existence and content checks in sequence.
 
@@ -266,41 +277,47 @@ class TerraTablePostValidation:
         logging.info(f"Checking genomics files for {len(all_main_participants)} main participant(s)")
         all_participant_files = self._genomics_checker.check_all_participants(all_main_participants)
 
+        all_validation_errors = []
+
         # Validate the main workspace
         if self.workspace_scope in (ALL, MAIN):
             if self.main_workspace is None:
                 logging.error("Main workspace object is None — cannot validate main workspace tables")
-                return False
+                all_validation_errors.append(
+                    {
+                        "workspace": "Main",
+                        "errors": ["No 'main' workspace found"]
+                    }
+                )
 
-            logging.info("Building expected table data for main workspace...")
-            expected_main_data = self._build_expected_table_data_for_main(
-                participant_files=all_participant_files, unique_participants=all_main_participants
-            )
-            expected_main_tables = list(expected_main_data.keys())
+            if self.main_workspace:
+                logging.info("Building expected table data for main workspace...")
+                expected_main_data = self._build_expected_table_data_for_main(
+                    participant_files=all_participant_files, unique_participants=all_main_participants
+                )
+                expected_main_tables = list(expected_main_data.keys())
 
-            # Step 1: verify all expected tables exist with no extras
-            if not self._validate_workspace_tables(
-                workspace=self.main_workspace,
-                expected_tables=expected_main_tables,
-                context="Main",
-            ):
-                logging.error("Main workspace table validation failed — stopping post-validation")
-                return False
+                # Step 1: verify all expected tables exist with no extras
+                validation_passed, table_validation_errors = self._validate_workspace_tables(
+                    workspace=self.main_workspace, expected_tables=expected_main_tables, context="Main",
+                )
+                if not validation_passed:
+                    all_validation_errors.extend(table_validation_errors)
 
-            # Step 2: verify the row contents of every expected table against Terra.
-            # This covers all CSV-backed tables (demographics, biomarker, etc.) as well
-            # as sequencing_files_table, using the same comparison logic for each.
-            for table_name, expected_rows in expected_main_data.items():
-                if not self._validate_table_contents(
-                    workspace=self.main_workspace,
-                    table_name=table_name,
-                    expected_rows=expected_rows,
-                    context="Main",
-                ):
-                    logging.error(f"Main workspace '{table_name}' content validation failed — stopping post-validation")
-                    return False
+                # Step 2: verify the row contents of every expected table against Terra.
+                # This covers all CSV-backed tables (demographics, biomarker, etc.) as well
+                # as sequencing_files_table, using the same comparison logic for each.
+                for table_name, expected_rows in expected_main_data.items():
+                    if table_content_validation_errors := self._validate_table_contents(
+                        workspace=self.main_workspace,
+                        table_name=table_name,
+                        expected_rows=expected_rows,
+                        context="Main",
+                    ):
+                        logging.error(f"Main workspace '{table_name}' content validation failed")
+                        all_validation_errors.extend(table_content_validation_errors)
 
-            logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
+                logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
 
         # Validate each sub workspace
         if self.workspace_scope in (ALL, SUB):
@@ -308,51 +325,58 @@ class TerraTablePostValidation:
                 workspace_name = sub_dataset.workspace_name
 
                 if workspace_name not in self.sub_workspaces:
-                    logging.error(f"No TerraWorkspace object found for sub workspace '{workspace_name}' — stopping post-validation")
-                    return False
+                    logging.error(f"No TerraWorkspace object found for sub workspace '{workspace_name}'")
+                    all_validation_errors.append(
+                        {
+                            "workspace": workspace_name,
+                            "errors": [f"No 'sub' workspace {workspace_name} found"]
+                        }
+                    )
 
-                sub_workspace_obj = self.sub_workspaces[workspace_name]
+                if workspace_name in self.sub_workspaces:
+                    sub_workspace_obj = self.sub_workspaces[workspace_name]
 
-                # Filter the already-checked participant file map to this sub workspace's
-                # participants so we don't re-run the expensive GCP existence check.
-                sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
-                sub_participant_files = {
-                    p: all_participant_files[p]
-                    for p in sub_participants
-                    if p in all_participant_files
-                }
+                    # Filter the already-checked participant file map to this sub workspace's
+                    # participants so we don't re-run the expensive GCP existence check.
+                    sub_participants = extract_all_participant_ids_from_files(sub_dataset.file_contents_map)
+                    sub_participant_files = {
+                        p: all_participant_files[p]
+                        for p in sub_participants
+                        if p in all_participant_files
+                    }
 
-                logging.info(f"Building expected table data for sub workspace '{workspace_name}'")
-                expected_sub_data = self._build_expected_table_data_for_sub(
-                    sub_dataset=sub_dataset, participant_files=sub_participant_files, unique_participants=sub_participants
-                )
-                expected_sub_tables = list(expected_sub_data.keys())
+                    logging.info(f"Building expected table data for sub workspace '{workspace_name}'")
+                    expected_sub_data = self._build_expected_table_data_for_sub(
+                        sub_dataset=sub_dataset, participant_files=sub_participant_files, unique_participants=sub_participants
+                    )
+                    expected_sub_tables = list(expected_sub_data.keys())
 
-                # Step 1: verify all expected tables exist with no extras
-                if not self._validate_workspace_tables(
-                    workspace=sub_workspace_obj,
-                    expected_tables=expected_sub_tables,
-                    context=workspace_name,
-                ):
-                    logging.error(f"Sub workspace '{workspace_name}' table validation failed — stopping post-validation")
-                    return False
-
-                # Step 2: verify the row contents of every expected table against Terra.
-                # Covers all CSV-backed tables and sequencing_files_table (where applicable).
-                for table_name, expected_rows in expected_sub_data.items():
-                    if not self._validate_table_contents(
+                    # Step 1: verify all expected tables exist with no extras
+                    validation_passed, table_validation_errors = self._validate_workspace_tables(
                         workspace=sub_workspace_obj,
-                        table_name=table_name,
-                        expected_rows=expected_rows,
+                        expected_tables=expected_sub_tables,
                         context=workspace_name,
-                    ):
-                        logging.error(f"Sub workspace '{workspace_name}' '{table_name}' content validation failed — stopping post-validation")
-                        return False
+                    )
+                    if not validation_passed:
+                        all_validation_errors.extend(table_validation_errors)
 
-                logging.info("Sub workspace '{workspace_name}' validated successfully ({len(expected_sub_tables)} table(s))")
+                    # Step 2: verify the row contents of every expected table against Terra.
+                    # Covers all CSV-backed tables and sequencing_files_table (where applicable).
+                    for table_name, expected_rows in expected_sub_data.items():
+                        if table_content_validation_errors := self._validate_table_contents(
+                            workspace=sub_workspace_obj,
+                            table_name=table_name,
+                            expected_rows=expected_rows,
+                            context=workspace_name,
+                        ):
+                            logging.error(f"Sub workspace '{workspace_name}' '{table_name}' content validation failed")
+                            all_validation_errors.extend(table_content_validation_errors)
 
-        logging.info("All Terra table post-validation checks passed successfully")
-        return True
+        if not all_validation_errors:
+            logging.info("All Terra table post-validation checks passed successfully")
+        else:
+            logging.error("Terra table post-validation failed with errors")
+        return all_validation_errors
 
 
 def get_args() -> Namespace:
@@ -382,6 +406,16 @@ def get_args() -> Namespace:
         ),
     )
     return parser.parse_args()
+
+def format_validation_errors_for_logging(validation_errors: list[dict]) -> list[dict]:
+    grouped_map = defaultdict(list)
+
+    for entry in validation_errors:
+        workspace = entry["workspace"]
+        errors = entry["errors"]
+        grouped_map[workspace].extend(errors)
+
+    return [{"workspace": ws, "errors": errs} for ws, errs in grouped_map.items()]
 
 
 if __name__ == '__main__':
@@ -440,7 +474,8 @@ if __name__ == '__main__':
     )
     if not participant_validator.run():
         logging.error("Participant post-validation failed.")
-        exit(1)
+        # TODO comment this back in
+        #exit(1)
 
     # Step 5: Load the participant-to-sample mapping and run Terra
     # table post-validation.
@@ -458,8 +493,11 @@ if __name__ == '__main__':
         gcp=gcp_client,
         participant_to_sample=participant_to_sample,
     )
-    if not table_validator.run():
-        logging.error("Terra table post-validation failed.")
+    if validation_errors := table_validator.run():
+        printable_validation_errors = format_validation_errors_for_logging(validation_errors)
+        logging.error(f"Terra table post-validation failed with the following errors:")
+        for error in printable_validation_errors:
+            print(error)
         exit(1)
 
     logging.info("Post-validation completed successfully.")

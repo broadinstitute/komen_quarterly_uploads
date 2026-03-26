@@ -3,6 +3,7 @@
 import logging
 import re
 from pathlib import Path
+from typing import Optional
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest
@@ -103,11 +104,13 @@ class WorkspaceManager:
         workspace: TerraWorkspace,
         expected_tables: list[str],
         check_no_extra: bool = False,
-    ) -> bool:
+    ) -> tuple[bool, list[dict]]:
         """
         Check whether all expected tables exist in the workspace, and optionally
         that no unexpected extra tables are present.
         """
+        validation_errors = []
+
         # Fetch the current set of tables from the Terra workspace
         workspace_info = workspace.get_workspace_entity_info().json()
         workspace_tables = list(workspace_info.keys())
@@ -115,24 +118,29 @@ class WorkspaceManager:
         # Check for expected tables that are missing from the workspace
         missing = [t for t in expected_tables if t not in workspace_tables]
         if missing:
-            missing_table_string = ", ".join(missing)
-            logging.warning(
-                f"Workspace '{workspace.workspace_name}': table(s) do not exist: '{missing_table_string}'"
+            validation_errors.append(
+                {
+                    "workspace": workspace.workspace_name,
+                    "errors": [f"Table: '{table}' expected, but missing" for table in missing]
+                }
             )
-            return False
 
         # Optionally check for tables in the workspace that were not expected
         if check_no_extra:
             extra = [t for t in workspace_tables if t not in expected_tables]
             if extra:
-                for t in sorted(extra):
-                    logging.error(
-                        f"Workspace '{workspace.workspace_name}': unexpected extra table '{t}' found"
-                    )
-                return False
-
-        logging.info(f"Workspace '{workspace.workspace_name}' has all expected tables")
-        return True
+                validation_errors.append(
+                    {
+                        "workspace": workspace.workspace_name,
+                        "errors": [f"Unexpected extra table: '{table}'" for table in extra]
+                    }
+                )
+        if not validation_errors:
+            logging.info(f"Workspace '{workspace.workspace_name}' has all expected tables")
+            return True, validation_errors
+        else:
+            logging.error("Encountered validation errors when checking expected tables")
+            return False, validation_errors
 
     @staticmethod
     def get_table_rows(workspace: TerraWorkspace, table_name: str) -> list[dict]:
@@ -173,7 +181,8 @@ class WorkspaceManager:
         if force:
             logging.info(f"--force set: skipping table check for '{workspace.workspace_name}', will upload all tables")
             return False
-        return self.workspace_has_all_tables(workspace, expected_tables)
+        has_all_tables, _ = self.workspace_has_all_tables(workspace, expected_tables)
+        return has_all_tables
 
     def create_workspace(self, workspace_name: str) -> TerraWorkspace:
         """
