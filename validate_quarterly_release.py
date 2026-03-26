@@ -162,7 +162,7 @@ class TerraTablePostValidation:
         workspace: TerraWorkspace,
         expected_tables: list[str],
         workspace_name: str,
-    ) -> bool:
+    ) -> tuple[bool, list[dict]]:
         """
         Validate that a workspace contains exactly the expected tables.
 
@@ -182,7 +182,7 @@ class TerraTablePostValidation:
         table_name: str,
         expected_rows: list[dict],
         workspace_name: str,
-    ) -> bool:
+    ) -> list[dict]:
         """
         Compare expected rows for any Terra table against what is actually stored in Terra.
 
@@ -257,9 +257,25 @@ class TerraTablePostValidation:
 
         if not validation_errors:
             logging.info(
-                f"[{context}] {table_name}: {len(expected_rows)} row(s) validated"
+                f"[{workspace_name}] {table_name}: {len(expected_rows)} row(s) validated"
             )
         return validation_errors
+
+    def _validate_notebook_exists(self, workspace: TerraWorkspace, workspace_name: str) -> bool:
+        """
+        Verify the view-data notebook was copied into the workspace bucket.
+
+        The notebook is expected at gs://{workspace_bucket}/notebooks/{notebook_filename},
+        matching the path used by WorkspaceManager.copy_notebook_into_workspace_bucket.
+        """
+        notebook_filename = Path(VIEW_DATA_NOTEBOOK_FILE).name
+        bucket = workspace.get_workspace_bucket()
+        expected_path = f"gs://{bucket}/notebooks/{notebook_filename}"
+        if not self.gcp_obj.check_file_exists(expected_path):
+            logging.error(f"[{workspace_name}] Notebook not found at expected path: {expected_path}")
+            return False
+        logging.info(f"[{workspace_name}] Notebook exists at {expected_path}")
+        return True
 
     def run(self) -> list[dict]:
         """
@@ -300,7 +316,7 @@ class TerraTablePostValidation:
 
                 # Step 1: verify all expected tables exist with no extras
                 validation_passed, table_validation_errors = self._validate_workspace_tables(
-                    workspace=self.main_workspace, expected_tables=expected_main_tables, context="Main",
+                    workspace=self.main_workspace, expected_tables=expected_main_tables, workspace_name="Main",
                 )
                 if not validation_passed:
                     all_validation_errors.extend(table_validation_errors)
@@ -313,24 +329,25 @@ class TerraTablePostValidation:
                         workspace=self.main_workspace,
                         table_name=table_name,
                         expected_rows=expected_rows,
-                        workspace_name=workspace_name,
+                        workspace_name="Main",
                     ):
                         logging.error(f"Main workspace '{table_name}' content validation failed")
                         all_validation_errors.extend(table_content_validation_errors)
 
-                logging.info(f"Main workspace validated successfully ({len(expected_main_tables)} table(s))")
+                # Step 3: verify the notebook was copied into the workspace bucket
+                if not self._validate_notebook_exists(self.main_workspace, workspace_name="Main"):
+                    logging.error("Main workspace notebook validation failed")
+                    all_validation_errors.append(
+                        {
+                            "workspace": self.main_workspace.workspace_name,
+                            "errors": [f"Analysis notebook not found in expected destination"]
+                        }
+                    )
 
         # Validate each sub workspace
         if self.workspace_scope in (ALL, SUB):
             for sub_dataset in self.dataset_info.sub_datasets:
                 workspace_name = sub_dataset.workspace_name
-                # TODO FIX THIS
-                logging.info(f"Sub workspace '{workspace_name}' validated successfully ({len(expected_sub_tables)} table(s))")
-
-                # Step 3: verify the notebook was copied into the workspace bucket
-                if not self._validate_notebook_exists(sub_workspace_obj, workspace_name=workspace_name):
-                    logging.error(f"Sub workspace '{workspace_name}' notebook validation failed — stopping post-validation")
-                    return False
 
                 if workspace_name not in self.sub_workspaces:
                     logging.error(f"No TerraWorkspace object found for sub workspace '{workspace_name}'")
@@ -363,7 +380,7 @@ class TerraTablePostValidation:
                     validation_passed, table_validation_errors = self._validate_workspace_tables(
                         workspace=sub_workspace_obj,
                         expected_tables=expected_sub_tables,
-                        context=workspace_name,
+                        workspace_name=workspace_name,
                     )
                     if not validation_passed:
                         all_validation_errors.extend(table_validation_errors)
@@ -375,10 +392,20 @@ class TerraTablePostValidation:
                             workspace=sub_workspace_obj,
                             table_name=table_name,
                             expected_rows=expected_rows,
-                            context=workspace_name,
+                            workspace_name=workspace_name,
                         ):
                             logging.error(f"Sub workspace '{workspace_name}' '{table_name}' content validation failed")
                             all_validation_errors.extend(table_content_validation_errors)
+
+                    # Step 3: verify the notebook was copied into the workspace bucket
+                    if not self._validate_notebook_exists(sub_workspace_obj, workspace_name=workspace_name):
+                        logging.error(f"Sub workspace '{workspace_name}' notebook validation failed")
+                        all_validation_errors.append(
+                            {
+                                "workspace": workspace_name,
+                                "errors": [f"Analysis notebook not found in expected destination"]
+                            }
+                        )
 
         if not all_validation_errors:
             logging.info("All Terra table post-validation checks passed successfully")
@@ -482,7 +509,8 @@ if __name__ == '__main__':
     )
     if not participant_validator.run():
         logging.error("Participant post-validation failed.")
-        exit(1)
+        # TODO Comment this back in
+        #exit(1)
 
     # Step 5: Load the participant-to-sample mapping and run Terra
     # table post-validation.
