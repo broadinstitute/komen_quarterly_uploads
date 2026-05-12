@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 
-from constants import PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH
+from constants import PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH, SUB_WORKSPACE_NAME
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.table_data_utils import get_table_id_column
@@ -33,7 +33,12 @@ def format_workspace_name(project_name: str, date_created: str, researcher_id: i
 
     # Replace spaces and special characters so the name is a valid Terra workspace identifier
     clean_project_name = re.sub(r'[^\w-]', '_', project_name)
-    return f"{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
+    return SUB_WORKSPACE_NAME.format(
+        clean_project_name=clean_project_name,
+        researcher_id=researcher_id,
+        year=year,
+        month=month,
+    )
 
 
 def parse_csv_paths_to_dataset_info(
