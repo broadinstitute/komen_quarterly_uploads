@@ -1,7 +1,7 @@
 from datetime import datetime
 
 MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}"
-# Sub workspace name comes from format_workspace_name in utilities.py
+SUB_WORKSPACE_NAME = "{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
 # TODO CHANGE BACK - FOR TESTING ONLY
 BILLING_PROJECT = "ops-integration-billing"
