@@ -307,10 +307,6 @@ def _collect_acl_rows(
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def main() -> None:
     """Parse arguments, resolve workspaces, audit ACLs, and output results as TSV."""
     args = get_args()
