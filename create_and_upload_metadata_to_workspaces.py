@@ -139,7 +139,7 @@ def setup_sub_workspace_auth_domain_groups(
         auth_domain_by_workspace[workspace_name] = auth_domain_group
 
         researcher_email = researcher_email_lookup.get(sub_dataset.researcher_id)
-        #TODO: Uncomment this
+        #TODO: Uncomment this. Being used for now so test data can work with missing researcher ids
         # if not researcher_email:
         #     missing_researcher_mappings.append(
         #         f"researcher_id={sub_dataset.researcher_id} workspace='{workspace_name}'"
