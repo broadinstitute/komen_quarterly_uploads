@@ -10,7 +10,7 @@ workflow AuditWorkspacePermissions {
 
 	# TODO Update this once final storage location for Docker is determined
 	String docker_name = select_first([docker, "us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest"])
-
+	
 	call AuditWorkspacesTask {
 		input:
             billing_project = billing_project,

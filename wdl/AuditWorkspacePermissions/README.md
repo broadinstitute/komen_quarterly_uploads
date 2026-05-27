@@ -17,20 +17,20 @@ This workflow is read-only with respect to workspace metadata and table data. It
 
 ## Inputs
 
-| Input Name        | Description                                                                                                                                                                                                                           | Type      | Required | Default                                                                                    |
-|-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|----------|--------------------------------------------------------------------------------------------|
-| `billing_project` | Terra billing project (namespace) to audit.                                                                                                                                                                                           | `String`  | Yes      | _(none)_                                                                                   |
+| Input Name        | Description                                                                                                                                                                                                                                  | Type      | Required | Default                                                                                    |
+|-------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|----------|--------------------------------------------------------------------------------------------|
+| `billing_project` | Terra billing project (namespace) to audit.                                                                                                                                                                                                  | `String`  | Yes      | _(none)_                                                                                   |
 | `workspaces`      | Optional space-separated list of exact workspace names to audit (e.g. `"WorkspaceA WorkspaceB"`). Even when provided, the script still fetches all accessible workspaces for the billing project and warns for any requested name not found. | `String?` | No       | _(none — all accessible workspaces in the billing project are audited)_                    |
-| `emails`          | Optional space-separated list of email addresses to filter output rows (e.g. `"user1@example.org user2@example.org"`).                                                                                                            | `String?` | No       | _(none — all ACL principals are included)_                                                 |
-| `docker`          | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                              | `String?` | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
+| `emails`          | Optional space-separated list of email addresses to filter output rows (e.g. `"user1@example.org user2@example.org"`).                                                                                                                       | `String?` | No       | _(none — all ACL principals are included)_                                                 |
+| `docker`          | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                      | `String?` | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest` |
 
 ---
 
 ## Outputs
 
-| Output Name    | Description                                                                                                 | Type   |
-|----------------|-------------------------------------------------------------------------------------------------------------|--------|
-| `audit_report` | TSV file containing permission entries with columns: `billing_project`, `workspace_name`, `email`, `permissions`, `can_share`, `can_compute`. | `File` |
+| Output Name    | Description                                                                                                                                    | Type   |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------|--------|
+| `audit_report` | TSV file containing permission entries with columns: `billing_project`, `workspace_name`, `email`, `permissions`, `can_share`, `can_compute`.  | `File` |
 
 ---
 
