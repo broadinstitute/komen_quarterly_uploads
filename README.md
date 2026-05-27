@@ -2,8 +2,13 @@
 
 ## Docker
 Anytime underlying Python code is changed, the Docker image needs to be rebuilt and pushed for the WDL to use. To 
-build, tag, and push the Docker image, run the following commands:
+build, tag, and push the Docker image, run the following commands to make sure permissions are correct:
 
+```bash
+gcloud auth login
+gcloud config set project operations-portal-427515
+```
+then run the below to build, tag, and push the image:
 ```bash
 docker build -t komen_quarterly_uploads:latest .
 docker tag komen_quarterly_uploads:latest us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest

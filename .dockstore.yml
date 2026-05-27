@@ -13,3 +13,10 @@ workflows:
     readMePath: /wdl/ValidateQuarterlyRelease/README.md
     testParameterFiles:
       - /wdl/ValidateQuarterlyRelease/ValidateQuarterlyRelease.wdl
+
+  - name: AuditWorkspacePermissions
+    subclass: WDL
+    primaryDescriptorPath: /wdl/AuditWorkspacePermissions/AuditWorkspacePermissions.wdl
+    readMePath: /wdl/AuditWorkspacePermissions/README.md
+    testParameterFiles:
+      - /wdl/AuditWorkspacePermissions/AuditWorkspacePermissions.wdl
