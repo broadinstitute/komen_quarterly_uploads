@@ -118,12 +118,9 @@ class WorkspaceFetcher:
         Return the workspace names to audit.
 
         Always fetches all accessible workspaces in the billing project.
-        If workspace names are explicitly provided, verifies they are accessible
-        and logs a warning for any that are not found.
-
-        Args:
-            workspaces: If provided, filter the accessible workspaces to these
-                        names only. If ``None``, return all accessible workspaces.
+        If ``self.workspaces`` is provided, verifies those names are accessible
+        and logs a warning for any that are not found. Otherwise, returns all
+        accessible workspaces in the billing project.
 
         Returns:
             Sorted list of workspace name strings.
