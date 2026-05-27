@@ -92,9 +92,11 @@ class WorkspaceFetcher:
     """
     Resolves which Terra workspaces should be audited.
 
-    When specific workspace names are provided by the caller, those are returned
-    directly.  Otherwise, ``Terra.fetch_accessible_workspaces`` is called and the
-    response is filtered down to workspaces that belong to ``billing_project``.
+    ``Terra.fetch_accessible_workspaces`` is used to retrieve accessible
+    workspaces, and the response is filtered down to workspaces that belong to
+    ``billing_project``. When specific workspace names are provided by the
+    caller, they are validated and filtered against those accessible
+    workspaces rather than returned directly.
     """
 
     # Only fetch the minimal fields needed to identify workspace identity.
