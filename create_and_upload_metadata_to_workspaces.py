@@ -7,6 +7,7 @@ converts CSV rows into Terra table payloads, and uploads all metadata with batch
 
 import logging
 import re
+import hashlib
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from typing import Optional
@@ -51,6 +52,9 @@ from transformation.genomics_file_checker import GenomicsFileChecker
 logging.basicConfig(
     format="%(levelname)s: %(asctime)s : %(message)s", level=logging.INFO
 )
+
+_AUTH_DOMAIN_SUFFIX = "_auth_domain"
+_MAX_TERRA_GROUP_NAME_LENGTH = 60
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -108,6 +112,31 @@ def build_researcher_email_lookup(researcher_id_mapping: list[dict]) -> dict[int
     return researcher_email_lookup
 
 
+def get_auth_domain_group_name(workspace_name: str) -> str:
+    """
+    Build a Terra auth-domain group name that always fits Terra's 60-char limit.
+
+    Preferred format is `<workspace_name>_auth_domain`. If that exceeds 60 chars,
+    the workspace prefix is truncated and an 8-char hash is inserted to preserve
+    uniqueness across similarly named workspaces.
+    """
+    preferred_name = f"{workspace_name}{_AUTH_DOMAIN_SUFFIX}"
+    if len(preferred_name) <= _MAX_TERRA_GROUP_NAME_LENGTH:
+        return preferred_name
+
+    # Derive a stable short hash from the full workspace name so truncated names remain unique.
+    short_hash = hashlib.sha1(workspace_name.encode("utf-8")).hexdigest()[:8]
+    hash_segment = f"_{short_hash}"
+    max_prefix_len = _MAX_TERRA_GROUP_NAME_LENGTH - len(hash_segment) - len(_AUTH_DOMAIN_SUFFIX)
+    trimmed_prefix = workspace_name[:max_prefix_len]
+    shortened_name = f"{trimmed_prefix}{hash_segment}{_AUTH_DOMAIN_SUFFIX}"
+    logging.info(
+        f"Auth-domain group name shortened for workspace '{workspace_name}': "
+        f"using '{shortened_name}'"
+    )
+    return shortened_name
+
+
 def setup_sub_workspace_auth_domain_groups(
     dataset_info: DatasetInfo,
     researcher_email_lookup: dict[int, str],
@@ -135,20 +164,19 @@ def setup_sub_workspace_auth_domain_groups(
 
     for sub_dataset in dataset_info.sub_datasets:
         workspace_name = sub_dataset.workspace_name
-        auth_domain_group = f"{workspace_name}_auth_domain"
+        auth_domain_group = get_auth_domain_group_name(workspace_name)
         auth_domain_by_workspace[workspace_name] = auth_domain_group
 
         researcher_email = researcher_email_lookup.get(sub_dataset.researcher_id)
-        #TODO: Uncomment this. Being used for now so test data can work with missing researcher ids
-        # if not researcher_email:
-        #     missing_researcher_mappings.append(
-        #         f"researcher_id={sub_dataset.researcher_id} workspace='{workspace_name}'"
-        #     )
-        #     logging.error(
-        #         f"Cannot configure auth domain for '{workspace_name}': "
-        #         f"researcher ID {sub_dataset.researcher_id} missing from mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
-        #     )
-        #     continue
+        if not researcher_email:
+            missing_researcher_mappings.append(
+                f"researcher_id={sub_dataset.researcher_id} workspace='{workspace_name}'"
+            )
+            logging.error(
+                f"Cannot configure auth domain for '{workspace_name}': "
+                f"researcher ID {sub_dataset.researcher_id} missing from mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
+            )
+            #continue
 
         if dry_run:
             logging.info(f"DRY RUN: Would create auth-domain group '{auth_domain_group}'")
@@ -164,7 +192,7 @@ def setup_sub_workspace_auth_domain_groups(
         admin_users = terra_group.check_group_members(group=auth_domain_group, role=ADMIN).json()
         existing_users = set(member_users + admin_users)
 
-        if researcher_email not in existing_users:
+        if researcher_email and researcher_email not in existing_users:
             terra_group.add_user_to_group(
                 group=auth_domain_group,
                 email=researcher_email,
@@ -437,10 +465,6 @@ def main():
         include_workspaces=include_workspaces,
         exclude_workspaces=exclude_workspaces,
     )
-
-    for sub_dataset in dataset_info.sub_datasets:
-        print(sub_dataset.workspace_name)
-    exit()
     
     # Initialize components
     dataset_validator = DatasetValidator()

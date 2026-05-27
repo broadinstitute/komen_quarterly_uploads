@@ -108,8 +108,7 @@ class ParticipantValidation:
 
         if failed:
             logging.error(f"{workspace_name}: {len(failed)} participant(s) failed enrollment validation")
-            #TODO: uncomment below. Done for now so we can use test data without failures
-            #return False
+            return False
 
         logging.info(
             f"{workspace_name}: All {len(participant_ids)} participant(s) are "

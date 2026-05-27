@@ -250,8 +250,11 @@ class WorkspaceManager:
         return workspaces
 
     def copy_notebook_into_workspace_bucket(self, terra_workspace_object: TerraWorkspace, notebook_location: str) -> None:
-        logging.info("Copying notebook into destination workspace bucket")
-        bucket = terra_workspace_object.get_workspace_bucket()
-        notebook_file_name = Path(notebook_location).name
-        dest_path = f"gs://{bucket}/notebooks/{notebook_file_name}"
-        self.gcp_util.copy_cloud_file(src_cloud_path=notebook_location, full_destination_path=dest_path)
+        if self.dry_run:
+            logging.info(f"Would copy {notebook_location} to workspace '{terra_workspace_object.workspace_name} if not dry run")
+        else:
+            logging.info("Copying notebook into destination workspace bucket")
+            bucket = terra_workspace_object.get_workspace_bucket()
+            notebook_file_name = Path(notebook_location).name
+            dest_path = f"gs://{bucket}/notebooks/{notebook_file_name}"
+            self.gcp_util.copy_cloud_file(src_cloud_path=notebook_location, full_destination_path=dest_path)
