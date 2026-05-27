@@ -8,7 +8,6 @@ from ops_utils.gcp_utils import GCPCloudFunctions
 from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 
-from constants import BILLING_PROJECT
 from models.data_models import DatasetInfo
 from transformation.column_order import TABLE_COLUMN_ORDER
 
@@ -200,7 +199,7 @@ class WorkspaceManager:
             TerraWorkspace object
         """
         workspace = TerraWorkspace(
-            billing_project=BILLING_PROJECT,
+            billing_project=self.billing_project,
             workspace_name=workspace_name,
             request_util=self.request_util
         )
@@ -251,7 +250,7 @@ class WorkspaceManager:
 
     def copy_notebook_into_workspace_bucket(self, terra_workspace_object: TerraWorkspace, notebook_location: str) -> None:
         if self.dry_run:
-            logging.info(f"Would copy {notebook_location} to workspace '{terra_workspace_object.workspace_name} if not dry run")
+            logging.info(f"DRY RUN: Would copy {notebook_location} to workspace '{terra_workspace_object.workspace_name}")
         else:
             logging.info("Copying notebook into destination workspace bucket")
             bucket = terra_workspace_object.get_workspace_bucket()

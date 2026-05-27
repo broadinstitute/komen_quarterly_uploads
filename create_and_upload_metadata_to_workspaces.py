@@ -91,16 +91,14 @@ def build_researcher_email_lookup(researcher_id_mapping: list[dict]) -> dict[int
     """
     Build a researcher-id -> email lookup from the mapping CSV rows.
 
-    Rows with missing/invalid IDs or missing emails are skipped with a warning.
+    Rows with invalid IDs are skipped with a warning.
     """
     researcher_email_lookup: dict[int, str] = {}
     for row in researcher_id_mapping:
         raw_researcher_id = (row.get("Researcher ID") or "").strip()
         email = (row.get("Email") or "").strip()
-
         if not raw_researcher_id or not email:
             continue
-
         try:
             researcher_id = int(raw_researcher_id)
         except ValueError:
@@ -176,7 +174,7 @@ def setup_sub_workspace_auth_domain_groups(
                 f"Cannot configure auth domain for '{workspace_name}': "
                 f"researcher ID {sub_dataset.researcher_id} missing from mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
             )
-            #continue
+            continue
 
         if dry_run:
             logging.info(f"DRY RUN: Would create auth-domain group '{auth_domain_group}'")
@@ -192,17 +190,18 @@ def setup_sub_workspace_auth_domain_groups(
         admin_users = terra_group.check_group_members(group=auth_domain_group, role=ADMIN).json()
         existing_users = set(member_users + admin_users)
 
-        if researcher_email and researcher_email not in existing_users:
-            terra_group.add_user_to_group(
-                group=auth_domain_group,
-                email=researcher_email,
-                role=MEMBER,
-                continue_if_exists=True,
-            )
-        else:
-            logging.info(
-                f"User '{researcher_email}' already exists in auth-domain group '{auth_domain_group}' — skipping"
-            )
+        if researcher_email:
+            if researcher_email not in existing_users:
+                terra_group.add_user_to_group(
+                    group=auth_domain_group,
+                    email=researcher_email,
+                    role=MEMBER,
+                    continue_if_exists=True,
+                )
+            else:
+                logging.info(
+                    f"User '{researcher_email}' already exists in auth-domain group '{auth_domain_group}' — skipping"
+                )
 
         if RESEARCH_ADMIN_GROUP_EMAIL not in admin_users:
             terra_group.add_user_to_group(
