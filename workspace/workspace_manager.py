@@ -183,12 +183,18 @@ class WorkspaceManager:
         has_all_tables, _ = self.workspace_has_all_tables(workspace, expected_tables)
         return has_all_tables
 
-    def create_workspace(self, workspace_name: str) -> TerraWorkspace:
+    def create_workspace(
+        self,
+        workspace_name: str,
+        auth_domain: list[dict[str, str]] | None = None,
+    ) -> TerraWorkspace:
         """
         Create a single Terra workspace, continuing silently if it already exists.
 
         Args:
-            workspace_name: Name of the workspace to create
+            workspace_name: Name of the workspace to create.
+            auth_domain: Optional Terra auth-domain payload, e.g.
+                [{"membersGroupName": "my_group_auth_domain"}].
 
         Returns:
             TerraWorkspace object
@@ -199,24 +205,46 @@ class WorkspaceManager:
             request_util=self.request_util
         )
         if self.dry_run:
-            logging.info(f"DRY RUN: Would create workspace '{workspace_name}'")
+            if auth_domain:
+                logging.info(
+                    f"DRY RUN: Would create workspace '{workspace_name}' with auth domain {auth_domain}"
+                )
+            else:
+                logging.info(f"DRY RUN: Would create workspace '{workspace_name}'")
         else:
-            workspace.create_workspace(continue_if_exists=True)
+            if auth_domain:
+                workspace.create_workspace(continue_if_exists=True, auth_domain=auth_domain)
+            else:
+                workspace.create_workspace(continue_if_exists=True)
         return workspace
 
-    def create_all_sub_workspaces(self, dataset_info: DatasetInfo) -> dict[str, TerraWorkspace]:
+    def create_all_sub_workspaces(
+        self,
+        dataset_info: DatasetInfo,
+        auth_domain_by_workspace: dict[str, str] | None = None,
+    ) -> dict[str, TerraWorkspace]:
         """
         Create Terra workspaces for all sub datasets.
 
         Args:
-            dataset_info: Object containing SFTP dataset information
+            dataset_info: Object containing SFTP dataset information.
+            auth_domain_by_workspace: Optional mapping of workspace_name ->
+                auth-domain group name. When present, each workspace is created
+                with auth_domain=[{"membersGroupName": <group_name>}].
 
         Returns:
             Dict mapping workspace names to sub TerraWorkspace objects
         """
         workspaces = {}
         for sub_dir_info in dataset_info.sub_datasets:
-            sub_workspace = self.create_workspace(sub_dir_info.workspace_name)
+            auth_domain_name = None
+            if auth_domain_by_workspace:
+                auth_domain_name = auth_domain_by_workspace.get(sub_dir_info.workspace_name)
+            auth_domain_payload = [{"membersGroupName": auth_domain_name}] if auth_domain_name else None
+            sub_workspace = self.create_workspace(
+                sub_dir_info.workspace_name,
+                auth_domain=auth_domain_payload,
+            )
             workspaces[sub_workspace.workspace_name] = sub_workspace
         logging.info(f"Successfully created {len(workspaces)} sub-workspace(s)")
         return workspaces

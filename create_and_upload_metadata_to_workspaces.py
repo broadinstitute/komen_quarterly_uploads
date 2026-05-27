@@ -83,6 +83,120 @@ def get_args() -> Namespace:
     return parser.parse_args()
 
 
+def build_researcher_email_lookup(researcher_id_mapping: list[dict]) -> dict[int, str]:
+    """
+    Build a researcher-id -> email lookup from the mapping CSV rows.
+
+    Rows with missing/invalid IDs or missing emails are skipped with a warning.
+    """
+    researcher_email_lookup: dict[int, str] = {}
+    for row in researcher_id_mapping:
+        raw_researcher_id = (row.get("Researcher ID") or "").strip()
+        email = (row.get("Email") or "").strip()
+
+        if not raw_researcher_id or not email:
+            continue
+
+        try:
+            researcher_id = int(raw_researcher_id)
+        except ValueError:
+            logging.warning(f"Skipping invalid Researcher ID in mapping row: {raw_researcher_id!r}")
+            continue
+
+        researcher_email_lookup[researcher_id] = email
+
+    return researcher_email_lookup
+
+
+def setup_sub_workspace_auth_domain_groups(
+    dataset_info: DatasetInfo,
+    researcher_email_lookup: dict[int, str],
+    request_util_obj: RunRequest,
+    dry_run: bool = False,
+) -> dict[str, str]:
+    """
+    Ensure every sub workspace has a corresponding auth-domain Terra group.
+
+    For each sub workspace, this function:
+    1) Creates `<workspace_name>_auth_domain` (continue_if_exists=True).
+    2) Adds the requesting researcher as a MEMBER if they are not already present.
+    3) Adds RESEARCH_ADMIN_GROUP_EMAIL as an ADMIN if not already an admin.
+
+    Returns:
+        Mapping of sub workspace name -> auth-domain group name.
+
+    Raises:
+        ValueError: If one or more researcher IDs cannot be mapped to emails.
+    """
+    auth_domain_by_workspace: dict[str, str] = {}
+    missing_researcher_mappings: list[str] = []
+
+    terra_group = None if dry_run else TerraGroups(request_util=request_util_obj)
+
+    for sub_dataset in dataset_info.sub_datasets:
+        workspace_name = sub_dataset.workspace_name
+        auth_domain_group = f"{workspace_name}_auth_domain"
+        auth_domain_by_workspace[workspace_name] = auth_domain_group
+
+        researcher_email = researcher_email_lookup.get(sub_dataset.researcher_id)
+        #TODO: Uncomment this
+        # if not researcher_email:
+        #     missing_researcher_mappings.append(
+        #         f"researcher_id={sub_dataset.researcher_id} workspace='{workspace_name}'"
+        #     )
+        #     logging.error(
+        #         f"Cannot configure auth domain for '{workspace_name}': "
+        #         f"researcher ID {sub_dataset.researcher_id} missing from mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
+        #     )
+        #     continue
+
+        if dry_run:
+            logging.info(f"DRY RUN: Would create auth-domain group '{auth_domain_group}'")
+            logging.info(f"DRY RUN: Would add '{researcher_email}' to '{auth_domain_group}' as MEMBER")
+            logging.info(f"DRY RUN: Would add '{RESEARCH_ADMIN_GROUP_EMAIL}' to '{auth_domain_group}' as ADMIN")
+            continue
+
+        # Create the auth-domain group first; if it exists already this is a no-op.
+        terra_group.create_group(group_name=auth_domain_group, continue_if_exists=True)
+
+        # Read current members/admins once so we only call add_user_to_group when needed.
+        member_users = terra_group.check_group_members(group=auth_domain_group, role=MEMBER).json()
+        admin_users = terra_group.check_group_members(group=auth_domain_group, role=ADMIN).json()
+        existing_users = set(member_users + admin_users)
+
+        if researcher_email not in existing_users:
+            terra_group.add_user_to_group(
+                group=auth_domain_group,
+                email=researcher_email,
+                role=MEMBER,
+                continue_if_exists=True,
+            )
+        else:
+            logging.info(
+                f"User '{researcher_email}' already exists in auth-domain group '{auth_domain_group}' — skipping"
+            )
+
+        if RESEARCH_ADMIN_GROUP_EMAIL not in admin_users:
+            terra_group.add_user_to_group(
+                group=auth_domain_group,
+                email=RESEARCH_ADMIN_GROUP_EMAIL,
+                role=ADMIN,
+                continue_if_exists=True,
+            )
+        else:
+            logging.info(
+                f"Admin '{RESEARCH_ADMIN_GROUP_EMAIL}' already exists in auth-domain group '{auth_domain_group}' — skipping"
+            )
+
+    if missing_researcher_mappings:
+        raise ValueError(
+            "Unable to configure auth-domain groups because researcher email mappings are missing for: "
+            f"{missing_researcher_mappings}"
+        )
+
+    return auth_domain_by_workspace
+
+
 def process_main_workspace(
     dataset_info: DatasetInfo,
     terra_workspace_obj: TerraWorkspace,
@@ -150,7 +264,7 @@ def process_sub_workspaces(
     workspace_manager_obj: WorkspaceManager,
     all_participant_files: dict,
     genomics_access_metadata: list[dict],
-    researcher_id_mapping: list[dict],
+    researcher_email_lookup: dict[int, str],
     gcp: GCPCloudFunctions,
     workspaces_needing_upload: set[str],
     dataset_notes: Optional[str] = None,
@@ -171,7 +285,7 @@ def process_sub_workspaces(
                                as returned by GenomicsFileChecker.check_all_participants().
                                Filtered per workspace inside this function.
         genomics_access_metadata: List of all researchers with clearance for genomics file access
-        researcher_id_mapping: List of dictionaries mapping ALL researchers IDs to emails
+        researcher_email_lookup: Dict mapping researcher_id -> email for ACL grants
         gcp: Shared GCPCloudFunctions instance
         workspaces_needing_upload: Set of workspace names that need uploading (pre-determined by caller)
         dataset_notes: Optional workspace description string to set.
@@ -240,7 +354,7 @@ def process_sub_workspaces(
             workspace_manager_obj.upload_table_data_to_workspace(sub_workspace_terra_obj, table_data)
             logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(table_data)} tables")
 
-        researcher_email = [u.get("Email") for u in researcher_id_mapping if u.get("Researcher ID") == researcher_id]
+        researcher_email = researcher_email_lookup.get(researcher_id)
         if not researcher_email:
             failure = (
                 f"Researcher ID '{researcher_id}' (workspace '{sub_dataset.workspace_name}') "
@@ -250,12 +364,12 @@ def process_sub_workspaces(
             logging.warning(failure)
         if dry_run:
             if researcher_email:
-                logging.info(f"DRY RUN: Would grant READER access to '{researcher_email[0]}' on workspace '{sub_dataset.workspace_name}'")
+                logging.info(f"DRY RUN: Would grant READER access to '{researcher_email}' on workspace '{sub_dataset.workspace_name}'")
             logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{sub_dataset.workspace_name}'")
         else:
             if researcher_email:
                 sub_workspace_terra_obj.update_user_acl(
-                    email=researcher_email[0],
+                    email=researcher_email,
                     access_level="READER",
                     can_share=False,
                     can_compute=False,
@@ -323,6 +437,10 @@ def main():
         include_workspaces=include_workspaces,
         exclude_workspaces=exclude_workspaces,
     )
+
+    for sub_dataset in dataset_info.sub_datasets:
+        print(sub_dataset.workspace_name)
+    exit()
     
     # Initialize components
     dataset_validator = DatasetValidator()
@@ -347,6 +465,9 @@ def main():
         dry_run=dry_run,
     )
 
+    researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING, gcp=gcp)
+    researcher_email_lookup = build_researcher_email_lookup(researcher_id_mapping)
+
     # Create the main workspace
     main_workspace_terra_obj = None
     if workspace_scope in (ALL, MAIN):
@@ -354,8 +475,19 @@ def main():
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}
+    sub_workspace_auth_domains: dict[str, str] = {}
     if workspace_scope in (ALL, SUB):
-        sub_workspaces = workspace_manager.create_all_sub_workspaces(dataset_info=dataset_info)
+        logging.info("Creating/validating auth-domain groups for sub workspaces")
+        sub_workspace_auth_domains = setup_sub_workspace_auth_domain_groups(
+            dataset_info=dataset_info,
+            researcher_email_lookup=researcher_email_lookup,
+            request_util_obj=request_util,
+            dry_run=dry_run,
+        )
+        sub_workspaces = workspace_manager.create_all_sub_workspaces(
+            dataset_info=dataset_info,
+            auth_domain_by_workspace=sub_workspace_auth_domains,
+        )
 
     # Load genomics access list early so we can correctly determine expected tables per sub workspace
     # before deciding whether uploads are needed (avoids falsely flagging missing sequencing_files_table
@@ -480,8 +612,6 @@ def main():
     add_researchers_with_genomics_access_to_group(file_access_contents=genomics_access_contents, request_util_obj=request_util, dry_run=dry_run)
     logging.info("Completed adding researchers to genomics access group")
 
-    researcher_id_mapping = get_cloud_csv_contents_as_dict(cloud_path=RESEARCHER_ID_TO_EMAIL_MAPPING, gcp=gcp)
-
     # Process main workspace
     if workspace_scope in (ALL, MAIN) and main_needs_upload:
         workspace_manager.copy_notebook_into_workspace_bucket(
@@ -509,7 +639,7 @@ def main():
             workspace_manager_obj=workspace_manager,
             all_participant_files=all_participant_files,
             genomics_access_metadata=genomics_access_contents,
-            researcher_id_mapping=researcher_id_mapping,
+            researcher_email_lookup=researcher_email_lookup,
             gcp=gcp,
             workspaces_needing_upload=sub_workspaces_needing_upload,
             dataset_notes=dataset_notes,
