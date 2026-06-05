@@ -63,8 +63,26 @@ Each matching ACL entry is emitted as one TSV row with the following columns:
 
 ---
 
+## Finding the Output
+
+After the workflow finishes, retrieve the audit report through the Terra UI:
+
+1. Open the workspace where the workflow was submitted and go to the **Submission History** tab.
+2. Click on the submission where **AuditWorkspacePermissions** was run.
+3. Under the **Links** column, click the **Job Manager** icon (it looks like a bulleted checklist).
+4. In Job Manager, click the **Outputs** tab.
+5. The report is listed as **`audit_report`** — click the link to download the TSV file.
+
+### If the workflow fails due to workspace permission errors
+
+The script writes the output file **before** raising a permission error, so the TSV may still contain results even when the job is marked as failed. In that case:
+
+- Navigate to the **execution directory** for the failed task. The `audit_report` TSV (`permission_audit.tsv`) will be in the same directory as the `stderr` log file.
+
+---
+
 ## Notes
 
 - The workflow only reports permissions; it does not modify ACLs.
-- Workspaces that fail ACL retrieval are logged and skipped so the workflow can continue processing other workspaces.
+- Workspaces that cannot be accessed are flagged, skipped, and listed in the error message at the end so that all remaining workspaces are still processed before the job fails.
 

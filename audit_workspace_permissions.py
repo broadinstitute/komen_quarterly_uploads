@@ -347,12 +347,16 @@ def main() -> None:
 
     # Collect all ACL rows from all workspaces
     all_rows: list[dict[str, str]] = []
+    failed_workspaces: list[str] = []
     for workspace_name in workspace_names:
         try:
             entries = auditor.audit_workspace(workspace_name=workspace_name, emails=email_filter)
         except Exception as exc:
-            # Log and continue — a single inaccessible workspace should not abort the audit
-            logging.error(f"Failed to retrieve ACL for workspace '{workspace_name}': {exc}")
+            # Flag and continue — a single inaccessible workspace should not abort the audit
+            logging.error(
+                f"No permission / failed to retrieve ACL for workspace '{workspace_name}': {exc}"
+            )
+            failed_workspaces.append(workspace_name)
             continue
 
         rows = _collect_acl_rows(
@@ -369,6 +373,15 @@ def main() -> None:
         list_of_dicts=all_rows,
         header_list=["workspace_name", "email", "permissions", "can_share", "can_compute"],
     )
+    logging.info(f"Output written to '{OUTPUT_TSV}'")
+
+    # --- Step 4: fail if any workspaces were inaccessible ---
+    if failed_workspaces:
+        failed_list = ", ".join(failed_workspaces)
+        raise PermissionError(
+            f"Audit completed with errors. Could not access {len(failed_workspaces)} workspace(s): "
+            f"{failed_list}"
+        )
 
 
 if __name__ == "__main__":
