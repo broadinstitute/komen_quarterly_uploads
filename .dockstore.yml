@@ -20,3 +20,10 @@ workflows:
     readMePath: /wdl/AuditWorkspacePermissions/README.md
     testParameterFiles:
       - /wdl/AuditWorkspacePermissions/AuditWorkspacePermissions.wdl
+
+  - name: AuditTerraGroups
+    subclass: WDL
+    primaryDescriptorPath: /wdl/AuditTerraGroups/AuditTerraGroups.wdl
+    readMePath: /wdl/AuditTerraGroups/README.md
+    testParameterFiles:
+      - /wdl/AuditTerraGroups/AuditTerraGroups.wdl
