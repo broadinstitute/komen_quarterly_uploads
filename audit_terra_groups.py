@@ -22,13 +22,16 @@ OUTPUT_TSV = "group_membership_audit.tsv"
 def get_args() -> Namespace:
     """Parse command-line arguments."""
     parser = ArgumentParser(
-        description="Audit Terra workspace permissions for a billing project."
+        description="Audit Terra group membership. Outputs a TSV report of admins and members for each group."
     )
     parser.add_argument(
         "--groups", "-g",
-        required=True,
         nargs="+",
-        help="Terra groups to audit. Do NOT include the '@firecloud' suffix. Separate multiple groups with spaces",
+        default=None,
+        help=(
+            "One or more Terra group names to audit (without the '@firecloud.org' suffix). "
+            "When omitted, all groups the user is an admin of are audited automatically."
+        ),
     )
     return parser.parse_args()
 
@@ -45,6 +48,50 @@ class GroupAuditor:
             request_util: Authenticated request utility passed to TerraGroups.
         """
         self.terra_groups = TerraGroups(request_util=request_util)
+
+    def resolve_groups(self, groups: list[str] | None) -> tuple[list[str], list[str]]:
+        """
+        Determine which groups to audit and which the user can only see as a member.
+
+        When ``groups`` is provided those names are returned as the admin list with
+        an empty member-only list (the caller supplied them explicitly).
+
+        When ``groups`` is ``None`` the method calls ``get_all_groups()`` to
+        discover every group the user belongs to and splits them by role:
+
+        - Groups where the user is an **admin** are returned in ``admin_groups``
+          and will be fully audited.
+        - Groups where the user is only a **member** are returned in
+          ``member_only_groups``; the caller should warn and ultimately fail.
+
+        Args:
+            groups: Explicit list of group names, or ``None`` to auto-discover.
+
+        Returns:
+            Tuple of ``(admin_groups, member_only_groups)``.
+        """
+        if groups:
+            return groups, []
+
+        logging.info("No groups specified — discovering all groups the user belongs to...")
+        all_groups: list[dict] = self.terra_groups.get_all_groups().json()
+
+        admin_groups: list[str] = []
+        member_only_groups: list[str] = []
+
+        for entry in all_groups:
+            name = entry.get("groupName", "")
+            role = entry.get("role", "").lower()
+            if role == ADMIN:
+                admin_groups.append(name)
+            else:
+                member_only_groups.append(name)
+
+        logging.info(
+            f"Found {len(admin_groups)} group(s) where user is admin "
+            f"and {len(member_only_groups)} group(s) where user is only a member."
+        )
+        return sorted(admin_groups), sorted(member_only_groups)
 
     def get_group_membership(self, group: str) -> dict[str, list[str]]:
         """
@@ -92,7 +139,6 @@ def _collect_group_rows(group: str, membership: dict[str, list[str]]) -> list[di
 def main():
     """Parse arguments, audit groups, and output results as TSV."""
     args = get_args()
-    groups = args.groups
 
     # Single token + request_util shared across all API calls
     token = Token()
@@ -100,10 +146,23 @@ def main():
 
     auditor = GroupAuditor(request_util=request_util)
 
-    logging.info(f"Auditing {len(groups)} group(s): {groups}")
+    # Resolve which groups to audit
+    admin_groups, member_only_groups = auditor.resolve_groups(args.groups)
+
+    # Warn immediately about groups the user cannot fully audit
+    for group in member_only_groups:
+        logging.warning(
+            f"Cannot retrieve access information for group '{group}': user is a member, not an admin."
+        )
+
+    if not admin_groups:
+        logging.warning("No groups available to audit. Exiting.")
+        return
+
+    logging.info(f"Auditing {len(admin_groups)} group(s): {admin_groups}")
 
     all_rows: list[dict[str, str]] = []
-    for group in groups:
+    for group in admin_groups:
         logging.info(f"Fetching membership for group '{group}'...")
         membership = auditor.get_group_membership(group)
         admin_count = len(membership["admins"])
@@ -117,6 +176,15 @@ def main():
         header_list=["group", "role", "email"],
     )
     logging.info("Done.")
+
+    # Fail after writing output if any groups were inaccessible
+    if member_only_groups:
+        failed_list = ", ".join(member_only_groups)
+        raise PermissionError(
+            f"Audit completed with errors. User is only a member (not an admin) of "
+            f"{len(member_only_groups)} group(s) and their full membership could not be retrieved: "
+            f"{failed_list}"
+        )
 
 
 if __name__ == '__main__':

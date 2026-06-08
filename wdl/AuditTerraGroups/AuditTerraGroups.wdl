@@ -2,7 +2,7 @@ version 1.0
 
 workflow AuditTerraGroups {
 	input {
-		String groups
+		String? groups
 		String? docker
 	}
 
@@ -21,13 +21,13 @@ workflow AuditTerraGroups {
 
 task AuditTerraGroupsTask {
 	input {
-		String groups
+		String? groups
 		String docker_name
 	}
 
 	command <<<
 		python /app/audit_terra_groups.py \
-			--groups ~{groups}
+			~{"--groups " + groups}
 	>>>
 
 	runtime {
