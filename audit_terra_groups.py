@@ -149,19 +149,26 @@ def main():
     # Resolve which groups to audit
     admin_groups, member_only_groups = auditor.resolve_groups(args.groups)
 
-    # Warn immediately about groups the user cannot fully audit
+    all_rows: list[dict[str, str]] = []
+
+    # Add a permission-denied row for every member-only group so they appear
+    # in the output file and are easy to spot.
     for group in member_only_groups:
         logging.warning(
             f"Cannot retrieve access information for group '{group}': user is a member, not an admin."
         )
+        all_rows.append({
+            "group": group,
+            "role": "PERMISSION DENIED",
+            "email": "Could not retrieve membership — user is a member of this group, not an admin.",
+        })
 
-    if not admin_groups:
+    if not admin_groups and not member_only_groups:
         logging.warning("No groups available to audit. Exiting.")
         return
 
     logging.info(f"Auditing {len(admin_groups)} group(s): {admin_groups}")
 
-    all_rows: list[dict[str, str]] = []
     for group in admin_groups:
         logging.info(f"Fetching membership for group '{group}'...")
         membership = auditor.get_group_membership(group)
@@ -177,14 +184,6 @@ def main():
     )
     logging.info("Done.")
 
-    # Fail after writing output if any groups were inaccessible
-    if member_only_groups:
-        failed_list = ", ".join(member_only_groups)
-        raise PermissionError(
-            f"Audit completed with errors. User is only a member (not an admin) of "
-            f"{len(member_only_groups)} group(s) and their full membership could not be retrieved: "
-            f"{failed_list}"
-        )
 
 
 if __name__ == '__main__':
