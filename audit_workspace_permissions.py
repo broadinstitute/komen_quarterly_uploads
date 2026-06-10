@@ -84,6 +84,19 @@ class PermissionEntry:
     pending: bool
 
 
+@dataclass
+class WorkspaceInfo:
+    """Lightweight workspace identity and caller access metadata from fetch_accessible_workspaces."""
+    name: str
+    access_level: str   # e.g. "OWNER", "WRITER", "READER", "PROJECT_OWNER"
+    can_share: bool
+
+    @property
+    def can_audit(self) -> bool:
+        """True when the caller has enough privilege to read the workspace ACL."""
+        return self.access_level in ["OWNER", "PROJECT_OWNER"] or self.can_share
+
+
 # ---------------------------------------------------------------------------
 # WorkspaceFetcher — resolves the list of workspace names to audit
 # ---------------------------------------------------------------------------
@@ -100,7 +113,7 @@ class WorkspaceFetcher:
     """
 
     # Only fetch the minimal fields needed to identify workspace identity.
-    _FIELDS = ["workspace.namespace", "workspace.name"]
+    _FIELDS = ["workspace.namespace", "workspace.name", "accessLevel", "canShare"]
 
     def __init__(self, billing_project: str, terra: Terra, workspaces: list[str] | None = None) -> None:
         """
@@ -111,58 +124,63 @@ class WorkspaceFetcher:
         """
         self.billing_project = billing_project
         self.terra = terra
-        self.workspaces = workspaces
+        self.workspaces_to_audit = workspaces
 
-    def get_workspace_names(self) -> list[str]:
+    def get_workspaces(self) -> list[WorkspaceInfo]:
         """
-        Return the workspace names to audit.
+        Return ``WorkspaceInfo`` objects for every workspace to audit.
 
-        Always fetches all accessible workspaces in the billing project.
-        If ``self.workspaces`` is provided, verifies those names are accessible
-        and logs a warning for any that are not found. Otherwise, returns all
-        accessible workspaces in the billing project.
+        Always fetches all accessible workspaces in the billing project, capturing
+        the caller's ``accessLevel`` and ``canShare`` flag for each one.
+        If ``self.workspaces`` is provided, only those names are returned (with a
+        warning for any not found). Otherwise, all workspaces in the billing project
+        are returned.
 
         Returns:
-            Sorted list of workspace name strings.
+            List of ``WorkspaceInfo`` sorted by workspace name.
         """
         logging.info(
             f"Fetching all accessible workspaces and filtering to billing project '{self.billing_project}'..."
         )
 
-        # fetch_accessible_workspaces returns a Response whose JSON is a list of
-        # workspace objects, each containing at minimum the requested fields under
-        # a nested "workspace" key: {"workspace": {"namespace": ..., "name": ...}}
         response = self.terra.fetch_accessible_workspaces(fields=self._FIELDS)
         all_workspaces: list[dict] = response.json()
 
-        # Build the set of accessible workspace names in this billing project
-        accessible_names = sorted(
-            ws["workspace"]["name"]
-            for ws in all_workspaces
-            if ws.get("workspace", {}).get("namespace") == self.billing_project
+        # Build WorkspaceInfo objects for every workspace in this billing project
+        accessible: list[WorkspaceInfo] = sorted(
+            [
+                WorkspaceInfo(
+                    name=ws["workspace"]["name"],
+                    access_level=ws.get("accessLevel", "UNKNOWN"),
+                    can_share=bool(ws.get("canShare", False)),
+                )
+                for ws in all_workspaces
+                if ws.get("workspace", {}).get("namespace") == self.billing_project
+            ],
+            key=lambda w: w.name,
         )
 
         logging.info(
-            f"Found {len(accessible_names)} workspace(s) in billing project '{self.billing_project}'"
+            f"Found {len(accessible)} workspace(s) in billing project '{self.billing_project}'"
         )
 
-        # If no explicit workspaces requested, return all accessible ones
-        if not self.workspaces:
-            return accessible_names
+        # Return all workspaces if no specific workspaces requested
+        if not self.workspaces_to_audit:
+            return accessible
 
-        # Otherwise, filter to the requested ones and warn about any not found
-        not_found = set(self.workspaces) - set(accessible_names)
-
+        # Filter to explicitly requested workspaces, warn about any not found
+        accessible_names = {w.name for w in accessible}
+        not_found = set(self.workspaces_to_audit) - accessible_names
         if not_found:
             for name in sorted(not_found):
                 logging.warning(
                     f"Requested workspace '{name}' not found in accessible workspaces for "
                     f"billing project '{self.billing_project}'"
                 )
+                raise Exception(f"Requested workspace '{name}' not found in accessible workspaces for billing project '{self.billing_project}'")
 
-        # Return only the requested workspaces that were found
-        result = [name for name in accessible_names if name in self.workspaces]
-        logging.info(f"Using {len(result)} of {len(self.workspaces)} requested workspace(s)")
+        result = [w for w in accessible if w.name in self.workspaces_to_audit]
+        logging.info(f"Using {len(result)} of {len(self.workspaces_to_audit)} requested workspace(s)")
         return result
 
 
@@ -319,13 +337,13 @@ def main() -> None:
 
     # --- Step 1: resolve workspace names ---
     terra = Terra(request_util=request_util)
-    workspace_names = WorkspaceFetcher(
+    workspaces_info = WorkspaceFetcher(
         billing_project=billing_project,
         terra=terra,
         workspaces=workspaces
-    ).get_workspace_names()
+    ).get_workspaces()
 
-    if not workspace_names:
+    if not workspaces_info:
         logging.warning(
             f"No workspaces found for billing project '{billing_project}'. Nothing to audit."
         )
@@ -342,31 +360,58 @@ def main() -> None:
         logging.info(f"Filtering results to {len(email_filter)} email(s): {email_filter}")
 
     logging.info(
-        f"Auditing {len(workspace_names)} workspace(s) in billing project '{billing_project}'"
+        f"Auditing {len(workspaces_info)} workspace(s) in billing project '{billing_project}'"
     )
 
     # Collect all ACL rows from all workspaces
     all_rows: list[dict[str, str]] = []
-    failed_workspaces: list[str] = []
-    for workspace_name in workspace_names:
-        try:
-            entries = auditor.audit_workspace(workspace_name=workspace_name, emails=email_filter)
-        except Exception as exc:
-            # Flag and continue — a single inaccessible workspace should not abort the audit
-            logging.error(
-                f"No permission / failed to retrieve ACL for workspace '{workspace_name}': {exc}"
+    for ws in workspaces_info:
+        if not ws.can_audit:
+            # Caller is not OWNER and canShare is False — skip the ACL call and
+            # record an informative sentinel row instead.
+            logging.warning(
+                f"Skipping ACL lookup for workspace '{ws.name}': caller access level is "
+                f"'{ws.access_level}' and canShare is False — insufficient permissions to read ACL."
             )
-            failed_workspaces.append(workspace_name)
+            all_rows.append({
+                "billing_project": billing_project,
+                "workspace_name": ws.name,
+                "email": "PERMISSION DENIED",
+                "permissions": (
+                    f"Could not retrieve ACL — caller access level is '{ws.access_level}' "
+                    f"and canShare is False."
+                ),
+                "can_share": "false",
+                "can_compute": "N/A",
+            })
+            continue
+
+        try:
+            entries = auditor.audit_workspace(workspace_name=ws.name, emails=email_filter)
+        except Exception as exc:
+            # Log, add an informative sentinel row, and continue — a single
+            # inaccessible workspace should not abort the audit.
+            logging.error(
+                f"No permission / failed to retrieve ACL for workspace '{ws.name}': {exc}"
+            )
+            all_rows.append({
+                "billing_project": billing_project,
+                "workspace_name": ws.name,
+                "email": "PERMISSION DENIED",
+                "permissions": "Could not retrieve ACL — insufficient permissions or workspace is inaccessible.",
+                "can_share": "N/A",
+                "can_compute": "N/A",
+            })
             continue
 
         rows = _collect_acl_rows(
-            workspace_name=workspace_name,
+            workspace_name=ws.name,
             entries=entries,
             billing_project=billing_project,
         )
         all_rows.extend(rows)
 
-    logging.info(f"Collected {len(all_rows)} ACL entry/entries across {len(workspace_names)} workspace(s)")
+    logging.info(f"Collected {len(all_rows)} ACL entry/entries across {len(workspaces_info)} workspace(s)")
 
     # --- Step 3: output as TSV ---
     Csv(file_path=OUTPUT_TSV, delimiter="\t").create_tsv_from_list_of_dicts(
@@ -374,14 +419,6 @@ def main() -> None:
         header_list=["workspace_name", "email", "permissions", "can_share", "can_compute"],
     )
     logging.info(f"Output written to '{OUTPUT_TSV}'")
-
-    # --- Step 4: fail if any workspaces were inaccessible ---
-    if failed_workspaces:
-        failed_list = ", ".join(failed_workspaces)
-        raise PermissionError(
-            f"Audit completed with errors. Could not access {len(failed_workspaces)} workspace(s): "
-            f"{failed_list}"
-        )
 
 
 if __name__ == "__main__":

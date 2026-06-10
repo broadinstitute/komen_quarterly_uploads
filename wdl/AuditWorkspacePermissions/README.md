@@ -6,12 +6,13 @@
 
 It calls a single task (`AuditWorkspacesTask`) which executes `audit_workspace_permissions.py` to:
 
-1. Resolve workspaces to audit for a billing project
-2. Retrieve workspace ACLs from Terra
-3. Optionally filter ACL rows to specific email addresses
-4. Output a TSV report with one row per workspace-principal permission entry
+1. Resolve workspaces to audit for a billing project, capturing each workspace's access level and `canShare` flag
+2. For workspaces where the caller has sufficient access (OWNER or canShare), retrieve the full ACL from Terra
+3. For workspaces where the caller lacks sufficient access, write an informative row in the output instead of making an API call
+4. Optionally filter ACL rows to specific email addresses
+5. Output a TSV report with one row per workspace-principal permission entry
 
-This workflow is read-only with respect to workspace metadata and table data. It does not create, update, or delete workspaces.
+This workflow is read-only with respect to workspace metadata and table data. It does not create, update, or delete workspaces. The workflow **always succeeds** — permission issues are recorded as informative rows in the output TSV rather than causing the job to fail.
 
 ---
 
@@ -37,27 +38,33 @@ This workflow is read-only with respect to workspace metadata and table data. It
 ## What `audit_workspace_permissions.py` does
 
 ### 1. Resolve workspace list
-The script always calls `Terra.fetch_accessible_workspaces(...)` and filters results to the requested `billing_project`.
+The script calls `Terra.fetch_accessible_workspaces(...)` and filters results to the requested `billing_project`. For each workspace it captures:
+- `accessLevel` — the caller's role (e.g. `OWNER`, `WRITER`, `READER`)
+- `canShare` — whether the caller can share the workspace
 
-- If `workspaces` is **not** provided: all accessible workspaces in that billing project are audited.
-- If `workspaces` **is** provided: only those names are kept **if** found in the accessible set.
-- Any explicitly requested workspace not found is logged as a warning.
+A workspace is considered **auditable** if the caller is an `OWNER` **or** `canShare` is `true`.
 
-### 2. Retrieve ACLs
-For each workspace selected in step 1, the script constructs a `TerraWorkspace` object and calls `TerraWorkspace.get_workspace_acl()`.
+- If `workspaces` is **not** provided: all workspaces in the billing project are included.
+- If `workspaces` **is** provided: only those names are kept if found in the accessible set; any not found are logged as a warning.
+
+### 2. Check caller access before retrieving ACLs
+Before making an ACL API call, the script checks whether the workspace is auditable:
+
+- **Auditable** (OWNER or canShare) → calls `TerraWorkspace.get_workspace_acl()` to retrieve the full ACL.
+- **Not auditable** → skips the API call entirely and writes a `PERMISSION DENIED` sentinel row to the output.
+
+Any unexpected API error also results in a sentinel row rather than aborting the run.
 
 ### 3. Apply optional email filter
 If `emails` is provided, ACL rows are filtered to those principals only (case-insensitive match).
 
 ### 4. Write TSV rows
-Each matching ACL entry is emitted as one TSV row with the following columns:
+Each ACL entry is emitted as one TSV row. Workspaces where the caller lacked sufficient access get a single sentinel row instead:
 
-- `billing_project`
-- `workspace_name`
-- `email`
-- `permissions`
-- `can_share`
-- `can_compute`
+| `workspace_name`    | `email`           | `permissions`                                                                   | `can_share` | `can_compute` |
+|---------------------|-------------------|---------------------------------------------------------------------------------|-------------|---------------|
+| MyWorkspace         | alice@example.com | OWNER                                                                           | true        | true          |
+| RestrictedWorkspace | PERMISSION DENIED | Could not retrieve ACL — caller access level is 'READER' and canShare is False. | false       | N/A           |
 
 `permissions` reflects the Terra access level (for example `OWNER`, `WRITER`, `READER`) and includes a pending marker when applicable.
 
@@ -73,16 +80,10 @@ After the workflow finishes, retrieve the audit report through the Terra UI:
 4. In Job Manager, click the **Outputs** tab.
 5. The report is listed as **`audit_report`** — click the link to download the TSV file.
 
-### If the workflow fails due to workspace permission errors
-
-The script writes the output file **before** raising a permission error, so the TSV may still contain results even when the job is marked as failed. In that case:
-
-- Navigate to the **execution directory** for the failed task. The `audit_report` TSV (`permission_audit.tsv`) will be in the same directory as the `stderr` log file.
-
 ---
 
 ## Notes
 
 - The workflow only reports permissions; it does not modify ACLs.
-- Workspaces that cannot be accessed are flagged, skipped, and listed in the error message at the end so that all remaining workspaces are still processed before the job fails.
-
+- The workflow will **not** fail due to permission errors. Workspaces the caller cannot fully audit appear as `PERMISSION DENIED` rows in the output TSV, making them easy to identify without breaking the run.
+- Workspaces are considered auditable when the caller's access level is `OWNER` or `canShare` is `true`. All other access levels (`WRITER`, `READER`, etc. without canShare) result in a sentinel row.
