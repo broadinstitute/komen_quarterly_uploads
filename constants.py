@@ -4,11 +4,11 @@ MAIN_WORKSPACE_NAME = f"ShareForCures-Dataset-{datetime.now().strftime('%Y-%m')}
 SUB_WORKSPACE_NAME = "{clean_project_name}_researcher_id_{researcher_id}_{year}_{month}"
 
 # TODO CHANGE BACK - FOR TESTING ONLY
-BILLING_PROJECT = "ops-integration-billing"
-#BILLING_PROJECT = "SFC-Research"
+#BILLING_PROJECT = "ops-integration-billing"
+BILLING_PROJECT = "SFC-Research"
 
 # TODO: This is our test bucket, will need to be changed when Komen gives us their bucket where files are saved
-METADATA_CSVS_BUCKET = "fc-fa9fd891-996a-4624-864e-c4f81d165a90"
+METADATA_CSVS_BUCKET = "fc-secure-401ba3d1-4039-42dc-9fb0-554f170ee9ea"#"fc-fa9fd891-996a-4624-864e-c4f81d165a90"
 
 # Genomics Files Configuration
 # Files are in workspace: SFC-Research/ShareForCures Genomics Files
