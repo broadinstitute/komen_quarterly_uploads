@@ -218,10 +218,10 @@ class FamilyHistoryBiologicalFather(CsvModel):
     father_ethnicity: Optional[str] = None
     father_age: Optional[str] = None
     father_death_age: Optional[str] = None
-    father_diagnosed_cancer: Optional[bool]
+    father_diagnosed_cancer: Optional[str]
     father_first_cancer_type: Optional[str] = None
     father_age_first_cancer_diagnosis: Optional[str] = None
-    father_diagnosed_second_cancer: Optional[bool]
+    father_diagnosed_second_cancer: Optional[str]
     father_second_cancer_type: Optional[str] = None
     father_age_second_cancer_diagnosis: Optional[str] = None
 
@@ -240,7 +240,7 @@ class FamilyHistoryBiologicalMother(CsvModel):
     mother_diagnosed_cancer: Optional[bool]
     mother_first_cancer_type: Optional[str] = None
     mother_age_first_cancer_diagnosis: Optional[str] = None
-    mother_diagnosed_second_cancer: Optional[bool]
+    mother_diagnosed_second_cancer: Optional[str]
     mother_second_cancer_type: Optional[str] = None
     mother_age_second_cancer_diagnosis: Optional[str] = None
 
@@ -252,7 +252,7 @@ class FamilyHistoryBiologicalSiblings(CsvModel):
     task_version: Optional[str] = None
     patient_task_id: Optional[str] = None
     sibling_birth_gender: Optional[str] = None
-    was_sibling_twin_triplet: Optional[bool]
+    was_sibling_twin_triplet: Optional[str]
     sibling_age: Optional[str] = None
     sibling_death_age: Optional[str] = None
     sibling_first_cancer_type: Optional[str] = None
@@ -277,7 +277,7 @@ class FamilyHistoryCancer(CsvModel):
     """Model for family_history_cancer.csv"""
     patient_id: str
     family_history_id: str
-    cancer_history_yn: Optional[bool]
+    cancer_history_yn: Optional[str]
     cancer_type: Optional[str] = None
     relative: Optional[str] = None
     relative_other: Optional[str] = None
@@ -292,7 +292,7 @@ class FamilyHistoryOtherFamilyMembers(CsvModel):
     maternal_grandmother_diagnosed_cancer: Optional[str] = None
     maternal_grandmother_cancer_diagnosis: Optional[str] = None
     maternal_grandmother_age_first_diagnosis: Optional[str] = None
-    paternal_grandmother_diagnosed_cancer: Optional[bool]
+    paternal_grandmother_diagnosed_cancer: Optional[str] = None
     paternal_grandmother_cancer_diagnosis: Optional[str] = None
     paternal_grandmother_age_first_diagnosis: Optional[str] = None
     mother_number_biological_sisters: Optional[str] = None
