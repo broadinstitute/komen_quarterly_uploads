@@ -24,9 +24,8 @@ from ops_utils.terra_util import TerraWorkspace
 from ops_utils.token_util import Token
 
 from constants import (
-    METADATA_CSVS_BUCKET,
+    METADATA_BUCKET,
     BILLING_PROJECT,
-    MAIN_WORKSPACE_NAME,
     GENOMICS_FILE_ACCESS_CSV,
     GENOMICS_BUCKET,
     VIEW_DATA_NOTEBOOK_FILE,
@@ -44,6 +43,7 @@ from utilities import (
     get_cloud_csv_contents_as_dict,
     load_participant_to_sample_mapping,
     create_calculated_age_diagnosis_table_data,
+    get_main_workspace_name,
 )
 from validation.participant_validator import ParticipantValidation
 from workspace.workspace_manager import WorkspaceManager
@@ -418,6 +418,10 @@ def get_args() -> Namespace:
     """Parse command line arguments."""
     parser = ArgumentParser(description="Validate quarterly release workspaces")
     parser.add_argument(
+        "--release_directory", "-r", required=True,
+        help="Quarterly release directory to validate, e.g. 'shareforcures_dataset_2026_07'"
+    )
+    parser.add_argument(
         "--workspace_scope", "-w",
         choices=[ALL, MAIN, SUB],
         default=ALL,
@@ -467,9 +471,14 @@ if __name__ == '__main__':
     if exclude_workspaces:
         logging.info(f"Exclude filter active — will skip: {exclude_workspaces}")
 
+    release_directory = args.release_directory
+    main_workspace_name = get_main_workspace_name(release_directory)
+    logging.info(f"Validating release directory '{release_directory}' -> main workspace '{main_workspace_name}'")
+
     # Step 1: Download all CSV file paths and their contents
     dataset_info = list_bucket_path_and_parse_dataset_info(
-        bucket=METADATA_CSVS_BUCKET,
+        bucket=METADATA_BUCKET,
+        release_directory=release_directory,
         gcp=gcp_client,
         include_workspaces=include_workspaces,
         exclude_workspaces=exclude_workspaces,
@@ -482,7 +491,7 @@ if __name__ == '__main__':
     if args.workspace_scope in (ALL, MAIN):
         main_workspace = TerraWorkspace(
             billing_project=BILLING_PROJECT,
-            workspace_name=MAIN_WORKSPACE_NAME,
+            workspace_name=main_workspace_name,
             request_util=request_util,
         )
 

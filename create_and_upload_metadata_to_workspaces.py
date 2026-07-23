@@ -18,15 +18,16 @@ from ops_utils.token_util import Token
 from ops_utils.gcp_utils import GCPCloudFunctions
 
 from constants import (
-    MAIN_WORKSPACE_NAME,
     BILLING_PROJECT,
-    METADATA_CSVS_BUCKET,
+    METADATA_BUCKET,
     GENOMICS_BUCKET,
     PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH,
     GENOMICS_FILE_ACCESS_CSV,
     RESEARCHER_ID_TO_EMAIL_MAPPING,
     GENOMICS_FILE_ACCESS_GROUP_NAME,
     RESEARCH_ADMIN_GROUP_EMAIL,
+    KOMEN_SUPER_ADMINS_GROUP_EMAIL,
+    SUBWORKSPACE_GENERAL_RELEASE_NOTES_FILE,
     MAIN,
     SUB,
     ALL,
@@ -42,6 +43,9 @@ from utilities import (
     get_expected_sub_table_names,
     load_participant_to_sample_mapping,
     create_calculated_age_diagnosis_table_data,
+    get_main_workspace_name,
+    load_release_notes,
+    build_sub_workspace_description,
 )
 from validation.dataset_validator import DatasetValidator
 from validation.participant_validator import ParticipantValidation
@@ -53,20 +57,23 @@ logging.basicConfig(
     format="%(levelname)s: %(asctime)s : %(message)s", level=logging.INFO
 )
 
-_AUTH_DOMAIN_SUFFIX = "_auth_domain"
-_MAX_TERRA_GROUP_NAME_LENGTH = 60
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
     parser = ArgumentParser(description="Find new csvs in SFTP site and create new workspaces and upload metadata to them")
+    parser.add_argument(
+        "--release_directory", "-r", required=True,
+        help="Quarterly release directory to process, e.g. 'shareforcures_dataset_2026_07'"
+    )
     parser.add_argument("--force", "-f", action="store_true",
                         help="Skip table existence checks and upload all data regardless of current workspace state")
     parser.add_argument("--dry_run", "-d", action="store_true",
                         help="Log what would happen without creating workspaces, uploading metadata, or modifying ACLs")
+    parser.add_argument("--skip_acl", "-s", action="store_true",
+                        help="Skip all ACL/group membership grants (workspace sharing and auth-domain membership). "
+                             "Workspaces and data are still created/uploaded normally.")
     parser.add_argument("--workspace_scope", "-w", choices=[ALL, MAIN, SUB], default=ALL,
                         help=f"Which workspaces to create and upload: '{ALL}' (default), '{MAIN}' only, or '{SUB}' only")
-    parser.add_argument("--dataset_notes", "-n", default=None,
-                        help="Optional path to a file whose contents will be set as the description on every workspace created")
     parser.add_argument(
         "--include_workspaces", "-i",
         nargs="+",
@@ -110,29 +117,17 @@ def build_researcher_email_lookup(researcher_id_mapping: list[dict]) -> dict[int
     return researcher_email_lookup
 
 
-def get_auth_domain_group_name(workspace_name: str) -> str:
+def get_auth_domain_group_name(researcher_id: int, project_id: int, workspace_name: str) -> str:
     """
-    Build a Terra auth-domain group name that always fits Terra's 60-char limit.
+    Build the Terra auth-domain group name for a sub workspace.
 
-    Preferred format is `<workspace_name>_auth_domain`. If that exceeds 60 chars,
-    the workspace prefix is truncated and an 8-char hash is inserted to preserve
-    uniqueness across similarly named workspaces.
+    Format: researcher_id_{researcher_id}_project_id_{project_id}_{hash}, where hash is an
+    8-char sha1 digest of the full workspace_name. The hash keeps the group name unique even
+    if the same researcher_id/project_id combination reappears under a different workspace_name
+    in a later quarterly release.
     """
-    preferred_name = f"{workspace_name}{_AUTH_DOMAIN_SUFFIX}"
-    if len(preferred_name) <= _MAX_TERRA_GROUP_NAME_LENGTH:
-        return preferred_name
-
-    # Derive a stable short hash from the full workspace name so truncated names remain unique.
     short_hash = hashlib.sha1(workspace_name.encode("utf-8")).hexdigest()[:8]
-    hash_segment = f"_{short_hash}"
-    max_prefix_len = _MAX_TERRA_GROUP_NAME_LENGTH - len(hash_segment) - len(_AUTH_DOMAIN_SUFFIX)
-    trimmed_prefix = workspace_name[:max_prefix_len]
-    shortened_name = f"{trimmed_prefix}{hash_segment}{_AUTH_DOMAIN_SUFFIX}"
-    logging.info(
-        f"Auth-domain group name shortened for workspace '{workspace_name}': "
-        f"using '{shortened_name}'"
-    )
-    return shortened_name
+    return f"researcher_id_{researcher_id}_project_id_{project_id}_{short_hash}"
 
 
 def setup_sub_workspace_auth_domain_groups(
@@ -145,9 +140,9 @@ def setup_sub_workspace_auth_domain_groups(
     Ensure every sub workspace has a corresponding auth-domain Terra group.
 
     For each sub workspace, this function:
-    1) Creates `<workspace_name>_auth_domain` (continue_if_exists=True).
+    1) Creates the researcher_id_{id}_project_id_{id}_{hash} auth-domain group (continue_if_exists=True).
     2) Adds the requesting researcher as a MEMBER if they are not already present.
-    3) Adds RESEARCH_ADMIN_GROUP_EMAIL as an ADMIN if not already an admin.
+    3) Adds RESEARCH_ADMIN_GROUP_EMAIL and KOMEN_SUPER_ADMINS_GROUP_EMAIL as ADMIN if not already admins.
 
     Returns:
         Mapping of sub workspace name -> auth-domain group name.
@@ -157,12 +152,17 @@ def setup_sub_workspace_auth_domain_groups(
     """
     auth_domain_by_workspace: dict[str, str] = {}
     missing_researcher_mappings: list[str] = []
+    admin_group_emails = [RESEARCH_ADMIN_GROUP_EMAIL, KOMEN_SUPER_ADMINS_GROUP_EMAIL]
 
     terra_group = None if dry_run else TerraGroups(request_util=request_util_obj)
 
     for sub_dataset in dataset_info.sub_datasets:
         workspace_name = sub_dataset.workspace_name
-        auth_domain_group = get_auth_domain_group_name(workspace_name)
+        auth_domain_group = get_auth_domain_group_name(
+            researcher_id=sub_dataset.researcher_id,
+            project_id=sub_dataset.project_id,
+            workspace_name=workspace_name,
+        )
         auth_domain_by_workspace[workspace_name] = auth_domain_group
 
         researcher_email = researcher_email_lookup.get(sub_dataset.researcher_id)
@@ -179,7 +179,8 @@ def setup_sub_workspace_auth_domain_groups(
         if dry_run:
             logging.info(f"DRY RUN: Would create auth-domain group '{auth_domain_group}'")
             logging.info(f"DRY RUN: Would add '{researcher_email}' to '{auth_domain_group}' as MEMBER")
-            logging.info(f"DRY RUN: Would add '{RESEARCH_ADMIN_GROUP_EMAIL}' to '{auth_domain_group}' as ADMIN")
+            for admin_email in admin_group_emails:
+                logging.info(f"DRY RUN: Would add '{admin_email}' to '{auth_domain_group}' as ADMIN")
             continue
 
         # Create the auth-domain group first; if it exists already this is a no-op.
@@ -203,17 +204,18 @@ def setup_sub_workspace_auth_domain_groups(
                     f"User '{researcher_email}' already exists in auth-domain group '{auth_domain_group}' — skipping"
                 )
 
-        if RESEARCH_ADMIN_GROUP_EMAIL not in admin_users:
-            terra_group.add_user_to_group(
-                group=auth_domain_group,
-                email=RESEARCH_ADMIN_GROUP_EMAIL,
-                role=ADMIN,
-                continue_if_exists=True,
-            )
-        else:
-            logging.info(
-                f"Admin '{RESEARCH_ADMIN_GROUP_EMAIL}' already exists in auth-domain group '{auth_domain_group}' — skipping"
-            )
+        for admin_email in admin_group_emails:
+            if admin_email not in admin_users:
+                terra_group.add_user_to_group(
+                    group=auth_domain_group,
+                    email=admin_email,
+                    role=ADMIN,
+                    continue_if_exists=True,
+                )
+            else:
+                logging.info(
+                    f"Admin '{admin_email}' already exists in auth-domain group '{auth_domain_group}' — skipping"
+                )
 
     if missing_researcher_mappings:
         raise ValueError(
@@ -230,8 +232,9 @@ def process_main_workspace(
     workspace_manager: WorkspaceManager,
     participant_files: dict[str, dict[str, Optional[str]]],
     participant_ids: set[str],
-    dataset_notes: Optional[str] = None,
+    release_notes_content: Optional[str] = None,
     dry_run: bool = False,
+    skip_acl: bool = False,
 ) -> None:
     """
     Process and upload data for the main workspace.
@@ -246,11 +249,24 @@ def process_main_workspace(
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
         participant_ids: Set of all participant IDs
-        dataset_notes: Optional workspace description string to set.
+        release_notes_content: Contents of the release's release_notes.md, if present, to set as description.
         dry_run: If True, log what would be uploaded without actually uploading.
+        skip_acl: If True, skip granting KOMEN_SUPER_ADMINS_GROUP_EMAIL owner access.
     """
-    if dataset_notes:
-        workspace_manager.set_workspace_description(terra_workspace_obj, dataset_notes)
+    if release_notes_content:
+        workspace_manager.set_workspace_description(terra_workspace_obj, release_notes_content)
+
+    if dry_run:
+        logging.info(f"DRY RUN: Would grant OWNER access to '{KOMEN_SUPER_ADMINS_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
+    elif skip_acl:
+        logging.info(f"SKIP ACL: Skipping workspace ACL grants for '{terra_workspace_obj.workspace_name}'")
+    else:
+        terra_workspace_obj.update_user_acl(
+            email=KOMEN_SUPER_ADMINS_GROUP_EMAIL,
+            access_level="OWNER",
+            can_share=True,
+            can_compute=True,
+        )
 
     table_data = {}
     for csv_file_path in dataset_info.main_dataset_files:
@@ -294,8 +310,10 @@ def process_sub_workspaces(
     researcher_email_lookup: dict[int, str],
     gcp: GCPCloudFunctions,
     workspaces_needing_upload: set[str],
-    dataset_notes: Optional[str] = None,
+    subworkspace_general_notes_template: str,
+    release_notes_content: Optional[str] = None,
     dry_run: bool = False,
+    skip_acl: bool = False,
 ) -> list[str]:
     """
     Process and upload data for all sub workspaces.
@@ -315,7 +333,10 @@ def process_sub_workspaces(
         researcher_email_lookup: Dict mapping researcher_id -> email for ACL grants
         gcp: Shared GCPCloudFunctions instance
         workspaces_needing_upload: Set of workspace names that need uploading (pre-determined by caller)
-        dataset_notes: Optional workspace description string to set.
+        subworkspace_general_notes_template: General sub-workspace description template, with
+            {researcher_id} and {research_project_id} placeholders filled in per sub dataset.
+        release_notes_content: Contents of the release's release_notes.md, if present, appended
+            to the description of every sub workspace.
         dry_run: If True, log what would be uploaded/modified without actually doing it.
 
     Returns:
@@ -341,8 +362,13 @@ def process_sub_workspaces(
 
         has_genomics_access = researcher_id in {int(user["Researcher ID"]) for user in genomics_access_metadata}
 
-        if dataset_notes:
-            workspace_manager_obj.set_workspace_description(sub_workspace_terra_obj, dataset_notes)
+        sub_workspace_description = build_sub_workspace_description(
+            subworkspace_general_notes_template=subworkspace_general_notes_template,
+            researcher_id=sub_dataset.researcher_id,
+            project_id=sub_dataset.project_id,
+            release_notes_content=release_notes_content,
+        )
+        workspace_manager_obj.set_workspace_description(sub_workspace_terra_obj, sub_workspace_description)
 
         table_data = {}
         for csv_file_path in sub_dataset.files:
@@ -393,6 +419,8 @@ def process_sub_workspaces(
             if researcher_email:
                 logging.info(f"DRY RUN: Would grant READER access to '{researcher_email}' on workspace '{sub_dataset.workspace_name}'")
             logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{sub_dataset.workspace_name}'")
+        elif skip_acl:
+            logging.info(f"SKIP ACL: Skipping workspace ACL grants for '{sub_dataset.workspace_name}'")
         else:
             if researcher_email:
                 sub_workspace_terra_obj.update_user_acl(
@@ -429,6 +457,30 @@ def add_researchers_with_genomics_access_to_group(file_access_contents: list[dic
             logging.info(f"User '{email}' already has access to genomics files group '{GENOMICS_FILE_ACCESS_GROUP_NAME}' — skipping")
 
 
+def leave_created_workspaces(
+    main_workspace: Optional[TerraWorkspace],
+    sub_workspaces: dict[str, TerraWorkspace],
+    dry_run: bool = False,
+    skip_acl: bool = False,
+) -> None:
+    """
+    Remove the current user/service account from every workspace created during this run.
+
+    This must be the final step taken against any workspace — once it runs, the running
+    identity no longer has access, leaving ownership with RESEARCH_ADMIN_GROUP_EMAIL and
+    the researcher/Komen admin groups instead.
+    """
+    workspaces = ([main_workspace] if main_workspace else []) + list(sub_workspaces.values())
+    for workspace in workspaces:
+        if dry_run:
+            logging.info(f"DRY RUN: Would remove current user from workspace '{workspace.workspace_name}'")
+        elif skip_acl:
+            logging.info(f"SKIP ACL: Skipping self-removal from workspace '{workspace.workspace_name}'")
+        else:
+            logging.info(f"Removing current user from workspace '{workspace.workspace_name}'")
+            workspace.leave_workspace(ignore_direct_access_error=True)
+
+
 
 
 def main():
@@ -436,16 +488,17 @@ def main():
     args = get_args()
     force = args.force
     dry_run = args.dry_run
+    skip_acl = args.skip_acl
     workspace_scope = args.workspace_scope
     if dry_run:
         logging.info("DRY RUN mode enabled — no workspaces will be created, no data will be uploaded")
+    if skip_acl:
+        logging.info("SKIP ACL mode enabled — workspaces and data will be created/uploaded but no ACL/group grants will be made")
     logging.info(f"Workspace scope: '{workspace_scope}'")
 
-    dataset_notes = args.dataset_notes
-    if dataset_notes:
-        with open(dataset_notes, "r", encoding="utf-8") as f:
-            dataset_notes = f.read()
-        logging.info(f"Loaded dataset notes from {args.dataset_notes}")
+    release_directory = args.release_directory
+    main_workspace_name = get_main_workspace_name(release_directory)
+    logging.info(f"Processing release directory '{release_directory}' -> main workspace '{main_workspace_name}'")
 
     include_workspaces = args.include_workspaces
     if include_workspaces:
@@ -458,8 +511,20 @@ def main():
     # Single shared GCP client used throughout
     gcp = GCPCloudFunctions()
 
+    # Release-specific release_notes.md becomes the main workspace description and is appended
+    # to every sub workspace's description. It is optional — a release may not have one.
+    release_notes_content = load_release_notes(release_directory=release_directory, gcp=gcp)
+    if release_notes_content:
+        logging.info(f"Loaded release notes for '{release_directory}'")
+
+    # General sub-workspace description template is required whenever sub workspaces are in scope.
+    subworkspace_general_notes_template = None
+    if workspace_scope in (ALL, SUB):
+        subworkspace_general_notes_template = gcp.read_file(cloud_path=SUBWORKSPACE_GENERAL_RELEASE_NOTES_FILE)
+
     dataset_info = list_bucket_path_and_parse_dataset_info(
-        bucket=METADATA_CSVS_BUCKET,
+        bucket=METADATA_BUCKET,
+        release_directory=release_directory,
         gcp=gcp,
         include_workspaces=include_workspaces,
         exclude_workspaces=exclude_workspaces,
@@ -494,7 +559,7 @@ def main():
     # Create the main workspace
     main_workspace_terra_obj = None
     if workspace_scope in (ALL, MAIN):
-        main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=MAIN_WORKSPACE_NAME)
+        main_workspace_terra_obj = workspace_manager.create_workspace(workspace_name=main_workspace_name)
 
     # Create sub workspaces
     sub_workspaces: dict[str, TerraWorkspace] = {}
@@ -550,6 +615,12 @@ def main():
 
     if not any_workspace_needs_upload:
         logging.info("All workspaces already have all expected tables — nothing to upload.")
+        leave_created_workspaces(
+            main_workspace=main_workspace_terra_obj,
+            sub_workspaces=sub_workspaces,
+            dry_run=dry_run,
+            skip_acl=skip_acl,
+        )
         return
 
     # From here on, only runs if at least one workspace needs uploading.
@@ -645,9 +716,10 @@ def main():
             terra_workspace_obj=main_workspace_terra_obj,
             workspace_manager=workspace_manager,
             participant_files=all_participant_files,
-            dataset_notes=dataset_notes,
+            release_notes_content=release_notes_content,
             participant_ids=participants_to_check,
             dry_run=dry_run,
+            skip_acl=skip_acl,
         )
 
     # Process sub workspaces
@@ -665,11 +737,20 @@ def main():
             researcher_email_lookup=researcher_email_lookup,
             gcp=gcp,
             workspaces_needing_upload=sub_workspaces_needing_upload,
-            dataset_notes=dataset_notes,
+            subworkspace_general_notes_template=subworkspace_general_notes_template,
+            release_notes_content=release_notes_content,
             dry_run=dry_run,
+            skip_acl=skip_acl,
         )
         mapping_failures.extend(sub_mapping_failures)
 
+    # Final step: remove the current user/service account from every workspace created during this run.
+    leave_created_workspaces(
+        main_workspace=main_workspace_terra_obj,
+        sub_workspaces=sub_workspaces,
+        dry_run=dry_run,
+        skip_acl=skip_acl,
+    )
 
     logging.info(
         f"Successfully processed "

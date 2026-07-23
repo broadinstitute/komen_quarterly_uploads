@@ -416,10 +416,6 @@ TABLE_COLUMN_ORDER: dict[str, dict[str, list[str]]] = {
             "presented_date", "leave_date",
         ],
     },
-    # Main-dataset only
-    "patient_id_map": {
-        "shown": ["patient_id", "hashed_patient_id"],
-    },
     # Sequencing files table (generated, not sourced from a CSV)
     "sequencing_files": {
         "shown": [
