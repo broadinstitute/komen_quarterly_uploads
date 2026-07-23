@@ -27,7 +27,6 @@ from csv_schemas.sub_models import (
     SocialDeterminantsNeighborhoodAndBuiltEnvironment,
     Symptom, Trial, TumorResponse, Visit,
 )
-from csv_schemas.main_models import PatientIdMap
 
 # Maps each CSV filename to its pydantic model class.
 # Used to validate the contents of each CSV against the expected schema.
@@ -79,8 +78,6 @@ CSV_SCHEMA_MAP: dict[str, type[BaseModel]] = {
     "trial.csv": Trial,
     "tumor_response.csv": TumorResponse,
     "visit.csv": Visit,
-    # Main-only
-    "patient_id_map.csv": PatientIdMap,
 }
 
 # Common CSV files present in both main_dataset and sub_dataset
@@ -135,7 +132,6 @@ COMMON_CSVS = [
 
 # CSV files unique to main_dataset only
 MAIN_ONLY_CSVS = [
-    "patient_id_map.csv",
     "patient_enrollment_status.csv",
 ]
 

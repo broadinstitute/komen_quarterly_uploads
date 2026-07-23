@@ -6,7 +6,7 @@
 
 It calls a single task (`ValidateRelease`) which executes `validate_quarterly_release.py` to:
 
-1. Download all CSV files from the metadata GCS bucket and parse them into main and sub dataset structures
+1. Download all CSV files for the given `release_directory` from the metadata GCS bucket and parse them into main and sub dataset structures
 2. Connect to existing Terra workspaces (no workspaces are created or modified)
 3. Verify that every participant in each sub workspace is present in the main dataset
 4. Verify that every participant is `active` and `enrolled` according to `patient_enrollment_status.csv`
@@ -22,6 +22,7 @@ Validation stops on the first failure so that root-cause issues can be addressed
 
 | Input Name           | Description                                                                                                                                                                                                                                                                               | Type       | Required | Default                                                                                    |
 |----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|----------|--------------------------------------------------------------------------------------------|
+| `release_directory`  | Quarterly release directory to validate, e.g. `"shareforcures_dataset_2026_07"`. CSVs are read from `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/{release_directory}/`, and the main workspace name is derived from the `YYYY_MM` suffix of this directory name.            | `String`   | Yes      | _(none)_                                                                                   |
 | `workspace_scope`    | Which workspaces to validate. `all` validates the main workspace and all sub workspaces. `main` validates only the main workspace. `sub` validates only sub workspaces.                                                                                                                   | `String`   | No       | `"main"`                                                                                   |
 | `include_workspaces` | Space-separated string of exact sub workspace names to validate (e.g. `"WorkspaceA WorkspaceB"`). When provided, only those sub workspaces are validated and all others are skipped. Any name not found in the dataset raises an error. Has no effect when `workspace_scope` is `main`.   | `String?`  | No       | _(none — all sub workspaces are validated)_                                                |
 | `exclude_workspaces` | Space-separated string of exact sub workspace names to skip validation entirely (e.g. `"WorkspaceA WorkspaceB"`). Has no effect when `workspace_scope` is `main`. A warning is logged for any name not found in the dataset.                                                              | `String?`  | No       | _(none — no sub workspaces are skipped)_                                                   |
@@ -32,8 +33,7 @@ Validation stops on the first failure so that root-cause issues can be addressed
 ## What `validate_quarterly_release.py` does
 
 ### 1. Load and parse CSV files
-All CSV files are listed from the metadata GCS bucket and read in parallel with multithreading. Files are separated 
-into main and subdatasets.
+All CSV files are listed from `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/{release_directory}/` and read in parallel with multithreading. Files directly under that path are the main dataset; files nested under a `researcher_id_<id>_project_id_<id>/` subdirectory are a sub dataset.
 Each sub dataset's metadata CSV is read at parse time to populate `project_name`, `date_created`, and the derived 
 `workspace_name` on the data model.
 
@@ -43,7 +43,7 @@ If `exclude_workspaces` is provided, any sub dataset whose derived workspace nam
 
 ### 2. Connect to existing Terra workspaces
 `TerraWorkspace` objects are constructed directly from known workspace names without calling any create or modify 
-APIs. The main workspace is identified by its constant name `ShareForCures-Dataset-YYYY-MM`. Sub workspace names are 
+APIs. The main workspace name (`ShareForCures-Dataset-YYYY-MM`) is derived from the `YYYY_MM` suffix of `release_directory`. Sub workspace names are 
 derived from each sub dataset's metadata CSV using the same naming convention as the upload script (`{project_name}_researcher_id_{researcher_id}_{YYYY}_{MM}`).
 
 ### 3. Load the genomics access list

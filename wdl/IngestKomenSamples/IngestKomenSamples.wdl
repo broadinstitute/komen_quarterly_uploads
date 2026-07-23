@@ -2,12 +2,12 @@ version 1.0
 
 workflow IngestKomenSamples {
 	input {
+		String release_directory
 		String workspace_scope = "all"
 		Boolean force = false
 		Boolean dry_run = false
 		String? include_workspaces
 		String? exclude_workspaces
-		File? dataset_notes
 		String? docker
 	}
 
@@ -16,10 +16,10 @@ workflow IngestKomenSamples {
 
 	call CreateWorkspacesAndUploadMetadata {
 		input:
+			release_directory = release_directory,
 			workspace_scope = workspace_scope,
 			force = force,
 			dry_run = dry_run,
-			dataset_notes = dataset_notes,
 			include_workspaces = include_workspaces,
 			exclude_workspaces = exclude_workspaces,
 			docker_name = docker_name
@@ -28,10 +28,10 @@ workflow IngestKomenSamples {
 
 task CreateWorkspacesAndUploadMetadata {
 	input {
+		String release_directory
 		String workspace_scope
 		Boolean force
 		Boolean dry_run
-		File? dataset_notes
 		String? include_workspaces
 		String? exclude_workspaces
 		String docker_name
@@ -39,8 +39,8 @@ task CreateWorkspacesAndUploadMetadata {
 
 	command <<<
 		python /app/create_and_upload_metadata_to_workspaces.py \
+			--release_directory ~{release_directory} \
 			--workspace_scope ~{workspace_scope} \
-			~{"--dataset_notes " + dataset_notes} \
 			~{"--include_workspaces " + include_workspaces} \
 			~{"--exclude_workspaces " + exclude_workspaces} \
 			~{if force then "--force" else ""} \

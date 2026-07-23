@@ -2,6 +2,7 @@ version 1.0
 
 workflow ValidateQuarterlyRelease {
 	input {
+		String release_directory
 		String workspace_scope = "main"
 		String? include_workspaces
 		String? exclude_workspaces
@@ -13,6 +14,7 @@ workflow ValidateQuarterlyRelease {
 
 	call ValidateRelease {
 		input:
+			release_directory = release_directory,
 			workspace_scope = workspace_scope,
 			include_workspaces = include_workspaces,
 			exclude_workspaces = exclude_workspaces,
@@ -22,6 +24,7 @@ workflow ValidateQuarterlyRelease {
 
 task ValidateRelease {
 	input {
+		String release_directory
 		String workspace_scope
 		String? include_workspaces
 		String? exclude_workspaces
@@ -30,6 +33,7 @@ task ValidateRelease {
 
 	command <<<
 		python /app/validate_quarterly_release.py \
+			--release_directory ~{release_directory} \
 			--workspace_scope ~{workspace_scope} \
 			~{"--include_workspaces " + include_workspaces} \
 			~{"--exclude_workspaces " + exclude_workspaces}

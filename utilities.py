@@ -8,13 +8,78 @@ from typing import Any, Optional
 
 from ops_utils.gcp_utils import GCPCloudFunctions
 
-from constants import PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH, SUB_WORKSPACE_NAME
+from constants import (
+    PARTICIPANT_TO_SAMPLE_MAPPING_FILE_PATH,
+    SUB_WORKSPACE_NAME,
+    MAIN_WORKSPACE_NAME_TEMPLATE,
+    METADATA_BUCKET,
+    QUARTERLY_RELEASES_PREFIX,
+    RELEASE_NOTES_FILENAME,
+)
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
 from transformation.table_data_utils import get_table_id_column
 
 # Matches the dynamic metadata filename, e.g. researcher_id_62_project_id_115_metadata.csv
 _METADATA_FILE_PATTERN = re.compile(r"researcher_id_\d+_project_id_\d+_metadata\.csv$")
+
+# Matches the trailing year_month on a release directory name, e.g. shareforcures_dataset_2026_07
+_RELEASE_DIRECTORY_DATE_PATTERN = re.compile(r"(\d{4})_(\d{2})$")
+
+
+def get_main_workspace_name(release_directory: str) -> str:
+    """
+    Derive the Terra main workspace name from the quarterly release directory name.
+
+    e.g. release_directory='shareforcures_dataset_2026_07' -> 'ShareForCures-Dataset-2026-07'
+    """
+    match = _RELEASE_DIRECTORY_DATE_PATTERN.search(release_directory)
+    if not match:
+        raise ValueError(
+            f"Could not parse a year_month suffix from release directory {release_directory!r}"
+        )
+    year, month = match.groups()
+    return MAIN_WORKSPACE_NAME_TEMPLATE.format(year=year, month=month)
+
+
+def get_release_directory_gcs_prefix(release_directory: str) -> str:
+    """Relative GCS prefix for a release directory, e.g. 'shareforcures_quarterly_releases/shareforcures_dataset_2026_07'."""
+    return f"{QUARTERLY_RELEASES_PREFIX}/{release_directory}"
+
+
+def load_release_notes(release_directory: str, gcp: GCPCloudFunctions) -> Optional[str]:
+    """
+    Read the release-specific release_notes.md for a quarterly release, if present.
+
+    Used as the main workspace description and appended to the sub workspace description
+    template. Returns None if no release_notes.md exists for this release.
+    """
+    release_notes_path = (
+        f"gs://{METADATA_BUCKET}/{get_release_directory_gcs_prefix(release_directory)}/{RELEASE_NOTES_FILENAME}"
+    )
+    if not gcp.check_file_exists(release_notes_path):
+        logging.info(f"No release notes found at {release_notes_path}")
+        return None
+    return gcp.read_file(cloud_path=release_notes_path)
+
+
+def build_sub_workspace_description(
+    subworkspace_general_notes_template: str,
+    researcher_id: int,
+    project_id: int,
+    release_notes_content: Optional[str],
+) -> str:
+    """
+    Fill the general sub-workspace notes template with this sub dataset's researcher_id and
+    project_id, then append the release-specific release_notes.md contents (if any) on a new line.
+    """
+    description = subworkspace_general_notes_template.format(
+        researcher_id=researcher_id,
+        research_project_id=project_id,
+    )
+    if release_notes_content:
+        description = f"{description.rstrip()}\n{release_notes_content.strip()}"
+    return description
 
 
 def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
@@ -50,8 +115,10 @@ def parse_csv_paths_to_dataset_info(
     """
     Parse a list of CSV file paths into a DatasetInfo structure.
 
-    Separates files into the main dataset (under shareforcures_dataset_*/) and
-    sub datasets (under researcher_id_*_project_id_*/).
+    All paths are assumed to already be scoped to a single release directory (the
+    caller lists the bucket with that directory as the prefix). Files nested under a
+    researcher_id_*_project_id_*/ subfolder belong to a sub dataset; every other file
+    is a main-dataset CSV.
     Read all file contents in a single multithreaded call then organize them.
 
     Args:
@@ -64,8 +131,6 @@ def parse_csv_paths_to_dataset_info(
             Any workspace in this list is excluded before any validation or upload.
             A warning is logged for any name in the list that was not found.
     """
-    # TODO Update this directory pattern matching once we know how CSV files are saved in the bucket
-    main_pattern = re.compile(r'/shareforcures_dataset_[^/]+/')
     sub_pattern = re.compile(r'/researcher_id_(\d+)_project_id_(\d+)/')
 
     # Read all files in one multithreaded call
@@ -81,20 +146,19 @@ def parse_csv_paths_to_dataset_info(
         # so the parsed headers match the pydantic schema field names exactly.
         contents_as_list = list(csv.DictReader(StringIO(raw_contents.lstrip("\ufeff"))))
 
-        if main_pattern.search(file_path):
+        sub_match = sub_pattern.search(file_path)
+        if sub_match:
+            researcher_id = int(sub_match.group(1))
+            project_id = int(sub_match.group(2))
+            key = (researcher_id, project_id)
+
+            if key not in sub_datasets_dict:
+                sub_datasets_dict[key] = {"files": [], "contents": {}}
+            sub_datasets_dict[key]["files"].append(file_path)
+            sub_datasets_dict[key]["contents"][file_path] = contents_as_list
+        else:
             main_files.append(file_path)
             main_file_contents[file_path] = contents_as_list
-        else:
-            sub_match = sub_pattern.search(file_path)
-            if sub_match:
-                researcher_id = int(sub_match.group(1))
-                project_id = int(sub_match.group(2))
-                key = (researcher_id, project_id)
-
-                if key not in sub_datasets_dict:
-                    sub_datasets_dict[key] = {"files": [], "contents": {}}
-                sub_datasets_dict[key]["files"].append(file_path)
-                sub_datasets_dict[key]["contents"][file_path] = contents_as_list
 
     sub_datasets = []
     found_include_names: list[str] = []   # tracks which include_workspaces names were matched
@@ -177,11 +241,21 @@ def parse_csv_paths_to_dataset_info(
 
 def list_bucket_path_and_parse_dataset_info(
     bucket: str,
+    release_directory: str,
     gcp: GCPCloudFunctions,
     include_workspaces: Optional[list[str]] = None,
     exclude_workspaces: Optional[list[str]] = None,
 ) -> DatasetInfo:
-    blob_metadata = gcp.list_bucket_contents(bucket_name=bucket, file_extensions_to_include=[".csv"], file_name_only=True)
+    """
+    List and parse all CSVs for a single quarterly release.
+
+    Scopes the bucket listing to gs://{bucket}/{QUARTERLY_RELEASES_PREFIX}/{release_directory}/
+    so only that release's main and sub dataset CSVs are read.
+    """
+    prefix = f"{get_release_directory_gcs_prefix(release_directory)}/"
+    blob_metadata = gcp.list_bucket_contents(
+        bucket_name=bucket, prefix=prefix, file_extensions_to_include=[".csv"], file_name_only=True
+    )
     all_csv_paths = [a["path"] for a in blob_metadata]
     dataset_info = parse_csv_paths_to_dataset_info(
         all_csv_paths,
