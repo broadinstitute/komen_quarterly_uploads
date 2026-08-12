@@ -3,7 +3,7 @@ version 1.0
 workflow ValidateQuarterlyRelease {
 	input {
 		String release_directory
-		String workspace_scope = "main"
+		String workspace_scope = "all"
 		String? include_workspaces
 		String? exclude_workspaces
 		String? docker
