@@ -540,7 +540,7 @@ if __name__ == '__main__':
         printable_validation_errors = format_validation_errors_for_logging(validation_errors)
         logging.error(f"Terra table post-validation failed with the following errors:")
         for error in printable_validation_errors:
-            print(error)
+            logging.error(error)
         exit(1)
 
     logging.info("Post-validation completed successfully.")
