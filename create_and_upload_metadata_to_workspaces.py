@@ -251,19 +251,26 @@ def process_main_workspace(
         participant_ids: Set of all participant IDs
         release_notes_content: Contents of the release's release_notes.md, if present, to set as description.
         dry_run: If True, log what would be uploaded without actually uploading.
-        skip_acl: If True, skip granting KOMEN_SUPER_ADMINS_GROUP_EMAIL owner access.
+        skip_acl: If True, skip granting KOMEN_SUPER_ADMINS_GROUP_EMAIL and RESEARCH_ADMIN_GROUP_EMAIL owner access.
     """
     if release_notes_content:
         workspace_manager.set_workspace_description(terra_workspace_obj, release_notes_content)
 
     if dry_run:
         logging.info(f"DRY RUN: Would grant OWNER access to '{KOMEN_SUPER_ADMINS_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
+        logging.info(f"DRY RUN: Would grant WRITER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
     elif skip_acl:
         logging.info(f"SKIP ACL: Skipping workspace ACL grants for '{terra_workspace_obj.workspace_name}'")
     else:
         terra_workspace_obj.update_user_acl(
             email=KOMEN_SUPER_ADMINS_GROUP_EMAIL,
             access_level="OWNER",
+            can_share=True,
+            can_compute=True,
+        )
+        terra_workspace_obj.update_user_acl(
+            email=RESEARCH_ADMIN_GROUP_EMAIL,
+            access_level="WRITER",
             can_share=True,
             can_compute=True,
         )
