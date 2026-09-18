@@ -258,7 +258,7 @@ def process_main_workspace(
 
     if dry_run:
         logging.info(f"DRY RUN: Would grant OWNER access to '{KOMEN_SUPER_ADMINS_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
-        logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
+        logging.info(f"DRY RUN: Would grant WRITER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
     elif skip_acl:
         logging.info(f"SKIP ACL: Skipping workspace ACL grants for '{terra_workspace_obj.workspace_name}'")
     else:
