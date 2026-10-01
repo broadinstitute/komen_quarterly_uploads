@@ -63,7 +63,7 @@ Every participant must have `role_user_status = "active"` and `step = "enrolled"
 Two checks are run per workspace, and validation stops on the first failure across all workspaces:
 
 **Table existence check**
-Each workspace is queried for its current set of tables. The check fails if any expected table is missing or if any unexpected extra table is present. Expected tables are derived from the same source CSV file list used by the upload script, with `sequencing_files_table` included for any sub workspace whose researcher has genomics access.
+Each workspace is queried for its current set of tables. The check fails if any expected table is missing or if any unexpected extra table is present. Expected tables are derived from the same source CSV file list used by the upload script, with `sequencing_files_table` included for any sub workspace whose researcher has genomics access, and `questionnaire_summary_table` always included for the main workspace — it's produced by a separate R analysis step (`sfc_questionnaire_analysis_pipeline.R`, run as part of `IngestKomenSamples`), not derived from any release CSV, so only its existence is checked here, not its row contents.
 
 **Table content check**
 For each expected table, its rows in Terra are fetched and compared against the rows built from the source CSVs. Expected rows are produced by passing each CSV through its Pydantic schema model, ensuring type coercion is applied consistently on both sides of the comparison. Rows are compared as order-independent sets — the synthetic row-ID column (`{table_name}_id`) is excluded from the comparison. Any missing or extra rows are logged in full.
