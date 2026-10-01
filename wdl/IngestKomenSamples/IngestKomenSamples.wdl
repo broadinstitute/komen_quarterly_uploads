@@ -11,8 +11,9 @@ workflow IngestKomenSamples {
 		String? docker
 
 		# Optional questionnaire analysis + Terra upload, main workspace only.
-		# Omit questionnaire_manifest to skip this part of the workflow entirely.
-		File? questionnaire_manifest
+		# questionnaire_manifest.csv is baked into r_docker (it only changes when the
+		# underlying CSV schemas do, which already requires a Docker rebuild).
+		Boolean run_questionnaire_analysis = true
 		Boolean five_year_diagnosis = false
 		String? r_docker
 		String metadata_bucket = "fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f"
@@ -34,11 +35,10 @@ workflow IngestKomenSamples {
 			docker_name = docker_name
 	}
 
-	if (defined(questionnaire_manifest)) {
+	if (run_questionnaire_analysis && (workspace_scope == "all" || workspace_scope == "main")) {
 		call RunQuestionnaireAnalysis {
 			input:
 				release_directory = release_directory,
-				questionnaire_manifest = select_first([questionnaire_manifest]),
 				five_year_diagnosis = five_year_diagnosis,
 				metadata_bucket = metadata_bucket,
 				quarterly_releases_prefix = quarterly_releases_prefix,
@@ -90,7 +90,6 @@ task CreateWorkspacesAndUploadMetadata {
 task RunQuestionnaireAnalysis {
 	input {
 		String release_directory
-		File questionnaire_manifest
 		Boolean five_year_diagnosis
 		String metadata_bucket
 		String quarterly_releases_prefix
@@ -102,7 +101,7 @@ task RunQuestionnaireAnalysis {
 
 		mkdir -p Data
 		gsutil -m cp "gs://~{metadata_bucket}/~{quarterly_releases_prefix}/~{release_directory}/*.csv" Data/
-		cp ~{questionnaire_manifest} questionnaire_manifest.csv
+		cp /app/questionnaire_manifest.csv questionnaire_manifest.csv
 
 		Rscript /app/sfc_questionnaire_analysis_pipeline.R ~{if five_year_diagnosis then "--five_year_diagnosis" else ""}
 	>>>

@@ -20,3 +20,4 @@ RUN Rscript -e "install.packages(c('gtsummary', 'gt'), repos = 'https://cloud.r-
 
 WORKDIR /app
 COPY sfc_questionnaire_analysis_pipeline.R /app/sfc_questionnaire_analysis_pipeline.R
+COPY questionnaire_manifest.csv /app/questionnaire_manifest.csv
