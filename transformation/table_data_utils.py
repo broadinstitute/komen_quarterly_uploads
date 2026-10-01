@@ -10,6 +10,20 @@ from csv_schemas.sub_models import ResearcherProjectMetadata
 # Matches the dynamic metadata filename, e.g. researcher_id_62_project_id_115_metadata.csv
 _METADATA_CSV_PATTERN = re.compile(r"^researcher_id_\d+_project_id_\d+_metadata\.csv$")
 
+# Zero-pad every synthetic row id to this many digits so that sorting a Terra table by its id
+# column (which Terra treats as text) matches numeric order, e.g. "000025" sorts before
+# "000826". Fixed (rather than sized to each table's own row count) so that re-uploading the
+# same table with a different row count — e.g. a --force re-run after a corrected CSV adds or
+# removes a row — doesn't shift every id's width and leave stale, differently-padded duplicate
+# rows behind (Terra upserts match on the id column's exact string value). 6 digits comfortably
+# covers any realistic table size here.
+ROW_ID_WIDTH = 6
+
+
+def format_row_id(row_num: int) -> str:
+    """Zero-pad a 1-based row number to ROW_ID_WIDTH digits, e.g. 25 -> '000025'."""
+    return str(row_num).zfill(ROW_ID_WIDTH)
+
 
 def get_table_name(csv_path: str) -> str:
     """Return the Terra table name for a CSV path."""
@@ -58,7 +72,7 @@ def convert_csv_rows_to_table_data(
     for row_num, row in enumerate(file_contents, start=1):
         row_data.append(
             {
-                table_id_column: str(row_num),
+                table_id_column: format_row_id(row_num),
                 **normalize_row_for_table_upload(row=row, filename=filename),
             }
         )
@@ -93,7 +107,7 @@ def create_sequencing_files_table_data(
     row_data = []
     for row_num, (participant_id, files) in enumerate(sorted(participant_files.items()), start=1):
         row = {
-            table_id_column: str(row_num),
+            table_id_column: format_row_id(row_num),
             "participant_id": participant_id,
         }
         for file_column in file_columns:
