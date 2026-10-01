@@ -31,8 +31,7 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
 | `dry_run`             | Log everything that would happen without actually creating workspaces, uploading metadata, or modifying ACLs.                                                                                                                                                                                    | `Boolean`  | No       | `false`                                                                                     |
 | `docker`              | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                                                                          | `String?`  | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest`  |
 | `billing_project`     | Terra billing project to create/use workspaces under. If not provided, each python script falls back to `BILLING_PROJECT` from `constants.py`.                                                                                                                                                   | `String?`  | No       | `BILLING_PROJECT` from `constants.py`                                                        |
-| `run_questionnaire_analysis` | Whether to run `RunQuestionnaireAnalysis` + `UploadQuestionnaireSummary` after `CreateWorkspacesAndUploadMetadata`. These tasks only ever run when this is `true` **and** `workspace_scope` is `all` or `main` (they only act on the main workspace, so they're skipped entirely when `workspace_scope` is `sub`). | `Boolean` | No | `true` |
-| `five_year_diagnosis` | Passed through to `sfc_questionnaire_analysis_pipeline.R` as `--five_year_diagnosis`, restricting the analysis to participants diagnosed since 2020. Only used when `run_questionnaire_analysis` is `true`. | `Boolean` | No | `false` |
+| `five_year_diagnosis` | Passed through to `sfc_questionnaire_analysis_pipeline.R` as `--five_year_diagnosis`, restricting the analysis to participants diagnosed since 2020. Only used when `workspace_scope` is `all` or `main` (see below). | `Boolean` | No | `false` |
 | `r_docker`            | Docker image used for the `RunQuestionnaireAnalysis` task. If not provided, the latest production R image is used. | `String?` | No | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_questionnaire_r:latest` |
 | `metadata_bucket`     | GCS bucket `RunQuestionnaireAnalysis` pulls the release's main dataset CSVs from. Must match `METADATA_BUCKET` in `constants.py`. | `String` | No | `fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f` |
 | `quarterly_releases_prefix` | GCS prefix under `metadata_bucket` that releases live under. Must match `QUARTERLY_RELEASES_PREFIX` in `constants.py`. | `String` | No | `shareforcures_quarterly_releases` |
@@ -41,15 +40,24 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
 
 ## Optional: questionnaire analysis and summary upload
 
-When `run_questionnaire_analysis` is `true` (the default), two additional tasks run after `CreateWorkspacesAndUploadMetadata`:
+Whenever `workspace_scope` is `all` or `main` (they only act on the main workspace, so they're skipped entirely when `workspace_scope` is `sub`), three additional tasks run, independent of `CreateWorkspacesAndUploadMetadata`:
 
-1. **`RunQuestionnaireAnalysis`** downloads the release's main dataset CSVs from GCS into `Data/`, copies the `questionnaire_manifest.csv` baked into the image (see `Dockerfile.r`) into the working directory, runs `sfc_questionnaire_analysis_pipeline.R` (in a dedicated R Docker image built from `Dockerfile.r`), and produces:
+1. **`EnsureMainWorkspaceExists`** runs `ensure_main_workspace_exists.py`, which just creates the main workspace if it doesn't already exist (`continue_if_exists=True` — the same call `CreateWorkspacesAndUploadMetadata` makes internally). This exists purely so `UploadQuestionnaireSummary` has a real but *narrow* precondition to depend on, instead of depending on all of `CreateWorkspacesAndUploadMetadata` succeeding — see below for why that distinction matters.
+2. **`RunQuestionnaireAnalysis`** downloads the release's main dataset CSVs from GCS into `Data/`, copies the `questionnaire_manifest.csv` baked into the image (see `Dockerfile.r`) into the working directory, runs `sfc_questionnaire_analysis_pipeline.R` (in a dedicated R Docker image built from `Dockerfile.r`), and produces:
    - `questionnaire_summary.csv` — one row per `category_key` (e.g. `gender_male`, `country_usa`) with `total` and `percentage` columns, computed from the same one-row-per-participant survey tables used for the docx summaries, over the full participant count for that survey (not just non-missing values)
    - a `_summary.docx` per survey (unchanged from the original script)
    - `data_collection_counts.txt` (unchanged)
-2. **`UploadQuestionnaireSummary`** uploads `questionnaire_summary.csv` to the main workspace's `questionnaire_summary_table` via a single batch upsert, using the same CSV-schema/Terra-upload path as every other table in this pipeline (`csv_schemas.QuestionnaireSummaryRow` → `convert_csv_rows_to_table_data`). It waits for `CreateWorkspacesAndUploadMetadata` so the main workspace is guaranteed to exist first.
+3. **`UploadQuestionnaireSummary`** uploads `questionnaire_summary.csv` to the main workspace's `questionnaire_summary_table` via a single batch upsert, using the same CSV-schema/Terra-upload path as every other table in this pipeline (`csv_schemas.QuestionnaireSummaryRow` → `convert_csv_rows_to_table_data`). It waits for `EnsureMainWorkspaceExists` (not `CreateWorkspacesAndUploadMetadata`) so the main workspace is guaranteed to exist first.
 
 **Known limitation:** `category_key` is derived from the column name only (not the survey name), so two surveys with a same-named column would produce colliding keys as separate rows. Check `questionnaire_manifest.csv` for column name collisions across surveys before relying on this in production.
+
+---
+
+## Why `UploadQuestionnaireSummary` doesn't depend on `CreateWorkspacesAndUploadMetadata`
+
+`create_and_upload_metadata_to_workspaces.py` can exit non-zero even after successfully creating workspaces and uploading all metadata — e.g. it deliberately raises an error at the end if any participant/researcher ID mapping failures were encountered, purely to flag that issue to a human. In WDL/Cromwell, a task failure blocks anything that depends on it, so if `UploadQuestionnaireSummary` depended on `CreateWorkspacesAndUploadMetadata` directly, that kind of non-fatal, deliberate failure would wrongly prevent it from ever running.
+
+Instead, `UploadQuestionnaireSummary` depends only on the narrow, low-risk `EnsureMainWorkspaceExists` task, which does nothing but idempotently create the main workspace. `CreateWorkspacesAndUploadMetadata` itself is left untouched — it still fails loudly and normally for any real problem, which is the correct, visible behavior; it's just no longer something the questionnaire branch needs to wait on.
 
 ---
 

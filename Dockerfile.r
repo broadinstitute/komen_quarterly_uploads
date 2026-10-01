@@ -15,8 +15,15 @@ RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -
     && apt-get update && apt-get install -yq google-cloud-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# gtsummary/gt aren't part of rocker/tidyverse's preinstalled package set
-RUN Rscript -e "install.packages(c('gtsummary', 'gt'), repos = 'https://cloud.r-project.org')"
+# gtsummary/gt aren't part of rocker/tidyverse's preinstalled package set. Installing them
+# from plain CRAN source alone can leave the base image's pre-baked rendering chain
+# (xfun/knitr/rmarkdown/commonmark) mismatched with what gt/gtsummary expect — surfaces at
+# render time as e.g. "object 'attr' is not exported by 'namespace:xfun'". Installing the
+# whole chain together as pre-built binaries from a single Posit Package Manager snapshot
+# (scoped to this image's Ubuntu jammy base) guarantees a mutually consistent version set
+# without recompiling every outdated package in the image from source.
+RUN Rscript -e "install.packages(c('xfun', 'knitr', 'rmarkdown', 'commonmark', 'gt', 'gtsummary'), repos = 'https://packagemanager.posit.co/cran/__linux__/jammy/latest')" \
+    && Rscript -e "for (p in c('xfun', 'knitr', 'rmarkdown', 'commonmark', 'gt', 'gtsummary')) cat(p, ':', as.character(packageVersion(p)), '\n')"
 
 WORKDIR /app
 COPY sfc_questionnaire_analysis_pipeline.R /app/sfc_questionnaire_analysis_pipeline.R

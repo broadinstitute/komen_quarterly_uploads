@@ -11,10 +11,8 @@ workflow IngestKomenSamples {
 		String? docker
 		String? billing_project
 
-		# Optional questionnaire analysis + Terra upload, main workspace only.
 		# questionnaire_manifest.csv is baked into r_docker (it only changes when the
 		# underlying CSV schemas do, which already requires a Docker rebuild).
-		Boolean run_questionnaire_analysis = true
 		Boolean five_year_diagnosis = false
 		String? r_docker
 		String metadata_bucket = "fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f"
@@ -37,7 +35,23 @@ workflow IngestKomenSamples {
 			billing_project = billing_project
 	}
 
-	if (run_questionnaire_analysis && (workspace_scope == "all" || workspace_scope == "main")) {
+	if (workspace_scope == "all" || workspace_scope == "main") {
+		# Runs immediately, independent of CreateWorkspacesAndUploadMetadata — only ensures the
+		# main workspace exists (continue_if_exists=True) so UploadQuestionnaireSummary has
+		# somewhere to upload to, without depending on CreateWorkspacesAndUploadMetadata's full
+		# success. That script can legitimately exit non-zero for reasons unrelated to the main
+		# workspace's existence (e.g. it deliberately fails at the end to flag participant/
+		# researcher mapping issues, even after successfully creating the workspace and
+		# uploading every table) — a real task failure there would otherwise block this
+		# questionnaire branch from ever running.
+		call EnsureMainWorkspaceExists {
+			input:
+				release_directory = release_directory,
+				dry_run = dry_run,
+				docker_name = docker_name,
+				billing_project = billing_project
+		}
+
 		call RunQuestionnaireAnalysis {
 			input:
 				release_directory = release_directory,
@@ -54,7 +68,7 @@ workflow IngestKomenSamples {
 				dry_run = dry_run,
 				docker_name = docker_name,
 				billing_project = billing_project,
-				wait_for = CreateWorkspacesAndUploadMetadata.done
+				wait_for = EnsureMainWorkspaceExists.done
 		}
 	}
 }
@@ -81,6 +95,26 @@ task CreateWorkspacesAndUploadMetadata {
 			~{if dry_run then "--dry_run" else ""} \
 			~{"--billing_project " + billing_project}
 
+	>>>
+
+	runtime {
+		docker: docker_name
+	}
+}
+
+task EnsureMainWorkspaceExists {
+	input {
+		String release_directory
+		Boolean dry_run
+		String docker_name
+		String? billing_project
+	}
+
+	command <<<
+		python /app/ensure_main_workspace_exists.py \
+			--release_directory ~{release_directory} \
+			~{if dry_run then "--dry_run" else ""} \
+			~{"--billing_project " + billing_project}
 	>>>
 
 	output {
