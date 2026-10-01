@@ -837,3 +837,10 @@ class Visit(CsvModel):
     speciality_dept: Optional[str] = None
     presented_date: OptionalYearInt = None
     leave_date: OptionalYearInt = None
+
+
+class QuestionnaireSummaryRow(CsvModel):
+    """Model for questionnaire_summary.csv (produced by sfc_questionnaire_analysis_pipeline.R)"""
+    category_key: str
+    total: int
+    percentage: float

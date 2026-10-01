@@ -25,7 +25,7 @@ from csv_schemas.sub_models import (
     SocialDeterminantSocialAndCommunityContext, SocialDeterminantsEconomicStability,
     SocialDeterminantsEducationAccessAndQuality, SocialDeterminantsHealthCareAccessAndQuality,
     SocialDeterminantsNeighborhoodAndBuiltEnvironment,
-    Symptom, Trial, TumorResponse, Visit,
+    Symptom, Trial, TumorResponse, Visit, QuestionnaireSummaryRow,
 )
 
 # Maps each CSV filename to its pydantic model class.
@@ -78,6 +78,7 @@ CSV_SCHEMA_MAP: dict[str, type[BaseModel]] = {
     "trial.csv": Trial,
     "tumor_response.csv": TumorResponse,
     "visit.csv": Visit,
+    "questionnaire_summary.csv": QuestionnaireSummaryRow,
 }
 
 # Common CSV files present in both main_dataset and sub_dataset

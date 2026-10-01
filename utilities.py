@@ -18,7 +18,7 @@ from constants import (
 )
 from csv_schemas import MAIN_ONLY_CSVS
 from models.data_models import DatasetInfo, SubDatasetInfo
-from transformation.table_data_utils import get_table_id_column
+from transformation.table_data_utils import format_row_id, get_table_id_column
 
 # Matches the dynamic metadata filename, e.g. researcher_id_62_project_id_115_metadata.csv
 _METADATA_FILE_PATTERN = re.compile(r"researcher_id_\d+_project_id_\d+_metadata\.csv$")
@@ -307,7 +307,7 @@ def create_calculated_age_diagnosis_table_data(file_contents_map: dict[str, list
 
             calculated_age_of_diagnosis_table_data.append(
                 {
-                    table_id: str(row_counter),
+                    table_id: format_row_id(row_counter),
                     "patient_id": patient_id,
                     "time_since_diagnosis": str(current_year - year_of_diagnosis),
                     "age_at_diagnosis": str(year_of_diagnosis - year_of_birth),

@@ -4,7 +4,7 @@
 
 `IngestKomenSamples` is a WDL workflow that runs the quarterly ShareForCures data ingest pipeline inside a Docker container on Terra.
 
-It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and_upload_metadata_to_workspaces.py` to:
+It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and_upload_metadata_to_workspaces.py` to:
 
 1. Read all CSV files for the given `release_directory` from the metadata GCS bucket
 2. Validate every CSV against its expected Pydantic schema (column presence, types, no extra columns)
@@ -15,7 +15,7 @@ It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `cre
 7. Convert each CSV's rows through its schema model (coercing types, normalising booleans, etc.) and upload all tables to the appropriate workspace in a single batch upsert call
 8. Build a `sequencing_files_table` from GCS genomics file paths (CRAM, CRAI, GVCF, VCF, QC metrics) for workspaces whose researcher has genomics file access
 9. Grant each researcher READER access to their sub workspace and add them to the genomics access group where applicable
-10. Raise a clear error at the end if any participant or researcher ID mapping failures were encountered
+10. Record any participant or researcher ID mapping failures to `mapping_failures.txt` (and log each one) — this no longer fails the task itself; see below for why
 
 ---
 
@@ -27,9 +27,42 @@ It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `cre
 | `workspace_scope`     | Which workspaces to create and upload to. `all` creates the main workspace and all sub workspaces. `main` creates only the main workspace. `sub` creates only sub workspaces (still reads main participants to validate sub participants are a subset).                                          | `String`   | No       | `"all"`                                                                                     |
 | `include_workspaces`  | Space-separated string of exact sub workspace names to create and upload (e.g. `"WorkspaceA WorkspaceB"`). When provided, only those sub workspaces are processed and all others are skipped. Any name not found in the dataset raises an error. Has no effect when `workspace_scope` is `main`. | `String?`  | No       | _(none — all sub workspaces are processed)_                                                 |
 | `exclude_workspaces`  | Space-separated string of exact sub workspace names to skip entirely (e.g. `"WorkspaceA WorkspaceB"`). Has no effect when `workspace_scope` is `main`. A warning is logged for any name not found in the dataset.                                                                                | `String?`  | No       | _(none — no sub workspaces are skipped)_                                                    |
-| `force`               | Skip the table existence check and upload all data regardless of what is already in each workspace.                                                                                                                                                                                              | `Boolean`  | No       | `true`                                                                                      |
+| `force`               | Skip the table existence check and upload all data regardless of what is already in each workspace.                                                                                                                                                                                              | `Boolean`  | No       | `false`                                                                                     |
 | `dry_run`             | Log everything that would happen without actually creating workspaces, uploading metadata, or modifying ACLs.                                                                                                                                                                                    | `Boolean`  | No       | `false`                                                                                     |
 | `docker`              | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                                                                          | `String?`  | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest`  |
+| `billing_project`     | Terra billing project to create/use workspaces under. If not provided, each python script falls back to `BILLING_PROJECT` from `constants.py`.                                                                                                                                                   | `String?`  | No       | `BILLING_PROJECT` from `constants.py`                                                        |
+| `five_year_diagnosis` | Passed through to `sfc_questionnaire_analysis_pipeline.R` as `--five_year_diagnosis`, restricting the analysis to participants diagnosed since 2020. `RunQuestionnaireAnalysis` always runs regardless of `workspace_scope` (see below). | `Boolean` | No | `false` |
+| `r_docker`            | Docker image used for the `RunQuestionnaireAnalysis` task. If not provided, the latest production R image is used. | `String?` | No | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_questionnaire_r:latest` |
+| `metadata_bucket`     | GCS bucket `RunQuestionnaireAnalysis` pulls the release's main dataset CSVs from. Must match `METADATA_BUCKET` in `constants.py`. | `String` | No | `fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f` |
+| `quarterly_releases_prefix` | GCS prefix under `metadata_bucket` that releases live under. Must match `QUARTERLY_RELEASES_PREFIX` in `constants.py`. | `String` | No | `shareforcures_quarterly_releases` |
+
+---
+
+## Optional: questionnaire analysis and summary upload
+
+`RunQuestionnaireAnalysis` and `UploadQuestionnaireSummary` always run, regardless of `workspace_scope`:
+
+1. **`RunQuestionnaireAnalysis`** downloads the release's main dataset CSVs from GCS into `Data/`, copies the `questionnaire_manifest.csv` baked into the image (see `Dockerfile.r`) into the working directory, runs `sfc_questionnaire_analysis_pipeline.R` (in a dedicated R Docker image built from `Dockerfile.r`), and produces:
+   - `questionnaire_summary.csv` — one row per `category_key` (e.g. `gender_male`, `country_usa`) with `total` and `percentage` columns, computed from the same one-row-per-participant survey tables used for the docx summaries, over the full participant count for that survey (not just non-missing values)
+   - a `_summary.docx` per survey (unchanged from the original script)
+   - `data_collection_counts.txt` (unchanged)
+2. **`UploadQuestionnaireSummary`** uploads `questionnaire_summary.csv` to the main workspace's `questionnaire_summary_table` via a single batch upsert, using the same CSV-schema/Terra-upload path as every other table in this pipeline (`csv_schemas.QuestionnaireSummaryRow` → `convert_csv_rows_to_table_data`). It waits for `CreateWorkspacesAndUploadMetadata` to finish so the main workspace is guaranteed to exist first, but is a no-op (no upload attempted) when `workspace_scope` is `sub` — this table only ever belongs to the main workspace.
+
+Both run unconditionally (not gated by `workspace_scope` via an `if` block in the WDL) so their outputs are always real values, never an optional/possibly-absent one — see below for why that matters.
+
+**Known limitations — column name collisions in `questionnaire_manifest.csv`:** `category_key` is derived from the column name only (no survey prefix), which creates two distinct risks depending on where the collision occurs:
+- **Within a survey (silent data loss):** if two CSVs mapped to the *same* survey define the same column — e.g. `patient_profile_more_about_you.csv` and `patient_profile_supplemental_about_you.csv` (both `about_you`) both define `gender`, `sex_assigned_at_birth`, and `sexual_orientation` — `sfc_questionnaire_analysis_pipeline.R`'s `bind_rows()` merges them into one column, and the one-row-per-participant collapse (`first(na.omit(.x))`) silently picks whichever source has a non-NA value first if a participant has differing values in both. There's no way to tell which source won.
+- **Across surveys (ambiguous key, not an overwrite):** if two CSVs in *different* surveys define the same column — e.g. `has_genetic_test` appears in both `patient_profile_provider_info.csv` (`about_you`) and `family_history_you.csv` (`family_health_history`) — both surveys produce their own row with the identical `category_key` (e.g. `has_genetic_test_yes`). These do **not** overwrite each other in Terra (each gets its own sequential row id), but querying by `category_key` can't distinguish which survey's cohort a row represents.
+
+Check `questionnaire_manifest.csv` and the underlying CSV schemas for column name collisions — both within and across survey groups — before relying on this in production.
+
+---
+
+## Why a `CreateWorkspacesAndUploadMetadata` mapping failure doesn't block anything else
+
+`create_and_upload_metadata_to_workspaces.py` can encounter participant/researcher ID mapping failures even after successfully creating workspaces and uploading all metadata. It used to raise a `RuntimeError` for this, purely to flag the issue to a human — but in WDL/Cromwell, a task failure stops the scheduler from starting **any** new task, not just ones that depend on the failed one (Cromwell's default `workflowFailureMode` is `NoNewCalls`). That meant a mapping failure could prevent `RunQuestionnaireAnalysis`/`UploadQuestionnaireSummary` from ever starting, even though they have no real dependency on it.
+
+Instead, the script now records mapping failures to `mapping_failures.txt` (always written, even when empty) and logs each one, but no longer fails the task for this reason — all other failure modes (schema validation, participant validation, etc., which happen earlier and before any workspace exists) still fail the task normally. A final `CheckMappingFailures` task — which depends on `CreateWorkspacesAndUploadMetadata.mapping_failures_file` and (to force it to run last) `UploadQuestionnaireSummary`'s completion — reads that file and is what actually fails the workflow run if it's non-empty, so the original issue still surfaces to you without having blocked anything.
 
 ---
 
@@ -142,7 +175,7 @@ Before any heavy processing, each workspace is checked for whether all its expec
 ### 6. Build and upload table data
 For each CSV file:
 - Rows are run through their Pydantic model which coerces values to the correct Python types (e.g. `"yes"` → `True`, `"1.0"` → `1.0`)
-- A synthetic row-ID column (`{table_name}_id`) is added counting from 1
+- A synthetic row-ID column (`{table_name}_id`) is added counting from 1, zero-padded to 6 digits (e.g. `000001`, `000825`) so that sorting the column as text still matches numeric order. The width is fixed rather than sized to each table's row count — a `--force` re-run with a different row count would otherwise shift every id's padding and leave stale, differently-padded duplicate rows behind, since Terra's upsert matches on the id column's exact string value (see `format_row_id` in `transformation/table_data_utils.py`)
 - All tables for a workspace are uploaded in a single batch upsert call via `upload_metadata_with_batch_upsert`
 - Column display order is set in Terra after upload
 
@@ -161,5 +194,5 @@ The main workspace receives a master sequencing files table covering all main pa
 - Researchers with genomics file access are added to the `Genomics-Files-Access` Terra group
 
 ### 9. Mapping failure reporting
-If any participant ID is not found in `onyx_mapping.csv`, or any researcher ID is not found in `all_researchers.csv`, these are collected and reported together at the very end. The script raises a `RuntimeError` clearly stating that all uploads completed but mapping failures exist, with each failure logged individually.
+If any participant ID is not found in `onyx_mapping.csv`, or any researcher ID is not found in `all_researchers.csv`, these are collected and written to `mapping_failures.txt` (one per line, and always written even if empty) with each failure also logged individually. This does not fail the script — see "Why a `CreateWorkspacesAndUploadMetadata` mapping failure doesn't block anything else" above for why, and how the failure still surfaces to you via `CheckMappingFailures`.
 

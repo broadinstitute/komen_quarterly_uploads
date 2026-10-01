@@ -312,7 +312,11 @@ class TerraTablePostValidation:
                 expected_main_data = self._build_expected_table_data_for_main(
                     participant_files=all_participant_files, unique_participants=all_main_participants
                 )
-                expected_main_tables = list(expected_main_data.keys())
+                # questionnaire_summary_table is produced by a separate R analysis step, not
+                # reconstructable from the release's CSVs — only its existence is checked here,
+                # not its row contents, so it's added to the expected tables list but not to
+                # expected_main_data (which also drives the Step 2 content-validation loop below).
+                expected_main_tables = list(expected_main_data.keys()) + ["questionnaire_summary_table"]
 
                 # Step 1: verify all expected tables exist with no extras
                 validation_passed, table_validation_errors = self._validate_workspace_tables(
@@ -444,6 +448,10 @@ def get_args() -> Namespace:
             "A warning is logged for any name not found in the dataset."
         ),
     )
+    parser.add_argument(
+        "--billing_project",
+        help=f"Terra billing project the workspaces being validated belong to. Defaults to BILLING_PROJECT ('{BILLING_PROJECT}') from constants.py"
+    )
     return parser.parse_args()
 
 def format_validation_errors_for_logging(validation_errors: list[dict]) -> list[dict]:
@@ -475,6 +483,8 @@ if __name__ == '__main__':
     main_workspace_name = get_main_workspace_name(release_directory)
     logging.info(f"Validating release directory '{release_directory}' -> main workspace '{main_workspace_name}'")
 
+    billing_project = args.billing_project or BILLING_PROJECT
+
     # Step 1: Download all CSV file paths and their contents
     dataset_info = list_bucket_path_and_parse_dataset_info(
         bucket=METADATA_BUCKET,
@@ -490,7 +500,7 @@ if __name__ == '__main__':
 
     if args.workspace_scope in (ALL, MAIN):
         main_workspace = TerraWorkspace(
-            billing_project=BILLING_PROJECT,
+            billing_project=billing_project,
             workspace_name=main_workspace_name,
             request_util=request_util,
         )
@@ -498,7 +508,7 @@ if __name__ == '__main__':
     if args.workspace_scope in (ALL, SUB):
         for sub_dataset in dataset_info.sub_datasets:
             sub_workspaces[sub_dataset.workspace_name] = TerraWorkspace(
-                billing_project=BILLING_PROJECT,
+                billing_project=billing_project,
                 workspace_name=sub_dataset.workspace_name,
                 request_util=request_util,
             )

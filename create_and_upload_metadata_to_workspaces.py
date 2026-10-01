@@ -57,6 +57,11 @@ logging.basicConfig(
     format="%(levelname)s: %(asctime)s : %(message)s", level=logging.INFO
 )
 
+# Relative filename (written to the task's working directory) that any participant/researcher
+# mapping failures are recorded to. Declared as a WDL task output and read back by
+# CheckMappingFailures, which fails the workflow run if this file is non-empty.
+MAPPING_FAILURES_FILENAME = "mapping_failures.txt"
+
 
 def get_args() -> Namespace:
     """Parse command line arguments."""
@@ -90,6 +95,10 @@ def get_args() -> Namespace:
             "Optional space-separated list of exact sub workspace names to skip entirely. "
             "A warning is logged for any name not found in the dataset."
         ),
+    )
+    parser.add_argument(
+        "--billing_project",
+        help=f"Terra billing project to create/use workspaces under. Defaults to BILLING_PROJECT ('{BILLING_PROJECT}') from constants.py"
     )
     return parser.parse_args()
 
@@ -555,7 +564,7 @@ def main():
     # Initialize the workspace manager object
     workspace_manager = WorkspaceManager(
         request_util=request_util,
-        billing_project=BILLING_PROJECT,
+        billing_project=args.billing_project or BILLING_PROJECT,
         gcp_util=gcp,
         dry_run=dry_run,
     )
@@ -765,13 +774,22 @@ def main():
         f"{len(sub_workspace_metadata) if workspace_scope in (ALL, SUB) else 0} sub-workspace(s)"
     )
 
-    if mapping_failures:
+    # Written unconditionally (even when empty) rather than raised as a script failure: all
+    # workspace creation and metadata uploads above already completed successfully by this
+    # point, and a mapping failure here is a data-quality issue to flag to a human, not a
+    # reason to fail the task — downstream steps (e.g. the questionnaire summary upload) should
+    # still run. MAPPING_FAILURES_FILENAME is read back by CheckMappingFailures in the WDL,
+    # which is what actually fails the workflow run if this file is non-empty.
+    with open(MAPPING_FAILURES_FILENAME, "w") as f:
         for failure in mapping_failures:
             logging.error(f"MAPPING FAILURE: {failure}")
-        raise RuntimeError(
+            f.write(f"{failure}\n")
+
+    if mapping_failures:
+        logging.error(
             f"All workspace creation and metadata uploads completed successfully, but "
             f"{len(mapping_failures)} mapping failure(s) were encountered. "
-            f"See MAPPING FAILURE log entries above for details."
+            f"See MAPPING FAILURE log entries above and {MAPPING_FAILURES_FILENAME} for details."
         )
 
 if __name__ == '__main__':

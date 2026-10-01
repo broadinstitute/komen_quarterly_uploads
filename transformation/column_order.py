@@ -304,6 +304,9 @@ TABLE_COLUMN_ORDER: dict[str, dict[str, list[str]]] = {
             "spirituality_helping_accept_cancer_or_treatment", "last_month_sense_of_purpose",
         ],
     },
+    "questionnaire_summary": {
+        "shown": ["category_key", "total", "percentage"],
+    },
     "radiation_therapy": {
         "shown": [
             "patient_id", "radiation_therapy_id", "radiation_therapy_yn",
