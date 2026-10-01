@@ -91,6 +91,10 @@ def get_args() -> Namespace:
             "A warning is logged for any name not found in the dataset."
         ),
     )
+    parser.add_argument(
+        "--billing_project",
+        help=f"Terra billing project to create/use workspaces under. Defaults to BILLING_PROJECT ('{BILLING_PROJECT}') from constants.py"
+    )
     return parser.parse_args()
 
 
@@ -555,7 +559,7 @@ def main():
     # Initialize the workspace manager object
     workspace_manager = WorkspaceManager(
         request_util=request_util,
-        billing_project=BILLING_PROJECT,
+        billing_project=args.billing_project or BILLING_PROJECT,
         gcp_util=gcp,
         dry_run=dry_run,
     )

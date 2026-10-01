@@ -38,6 +38,10 @@ def get_args() -> Namespace:
         "--dry_run", action="store_true",
         help="Log what would be uploaded without actually uploading"
     )
+    parser.add_argument(
+        "--billing_project",
+        help=f"Terra billing project that owns the main workspace. Defaults to BILLING_PROJECT ('{BILLING_PROJECT}') from constants.py"
+    )
     return parser.parse_args()
 
 
@@ -60,14 +64,16 @@ def main():
         file_contents=summary_rows,
     )
 
+    billing_project = args.billing_project or BILLING_PROJECT
+
     token = Token()
     request_util = RunRequest(token=token)
     gcp = GCPCloudFunctions()
     workspace_manager = WorkspaceManager(
-        request_util=request_util, billing_project=BILLING_PROJECT, gcp_util=gcp, dry_run=args.dry_run
+        request_util=request_util, billing_project=billing_project, gcp_util=gcp, dry_run=args.dry_run
     )
     terra_workspace = TerraWorkspace(
-        billing_project=BILLING_PROJECT, workspace_name=main_workspace_name, request_util=request_util
+        billing_project=billing_project, workspace_name=main_workspace_name, request_util=request_util
     )
 
     workspace_manager.upload_table_data_to_workspace(terra_workspace, table_data)
