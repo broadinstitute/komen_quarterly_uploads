@@ -12,7 +12,7 @@ from ops_utils.request_util import RunRequest
 from ops_utils.terra_util import TerraWorkspace
 from ops_utils.token_util import Token
 
-from constants import BILLING_PROJECT
+from constants import ALL, BILLING_PROJECT, MAIN, SUB
 from transformation.table_data_utils import convert_csv_rows_to_table_data
 from utilities import get_main_workspace_name
 from workspace.workspace_manager import WorkspaceManager
@@ -35,6 +35,14 @@ def get_args() -> Namespace:
         help="Path to the questionnaire_summary.csv produced by sfc_questionnaire_analysis_pipeline.R"
     )
     parser.add_argument(
+        "--workspace_scope", "-w",
+        choices=[ALL, MAIN, SUB],
+        default=ALL,
+        help="Which workspaces the overall release run is processing. Only 'all' or 'main' "
+             "result in an actual upload — this script is a no-op when scope is 'sub', since "
+             "this table only ever belongs to the main workspace."
+    )
+    parser.add_argument(
         "--dry_run", action="store_true",
         help="Log what would be uploaded without actually uploading"
     )
@@ -47,6 +55,11 @@ def get_args() -> Namespace:
 
 def main():
     args = get_args()
+
+    if args.workspace_scope not in (ALL, MAIN):
+        logging.info(f"workspace_scope is '{args.workspace_scope}' — nothing to upload (this table only belongs to the main workspace)")
+        return
+
     main_workspace_name = get_main_workspace_name(args.release_directory)
     logging.info(
         f"Processing release directory '{args.release_directory}' -> main workspace '{main_workspace_name}'"
