@@ -4,7 +4,7 @@
 
 `IngestKomenSamples` is a WDL workflow that runs the quarterly ShareForCures data ingest pipeline inside a Docker container on Terra.
 
-It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and_upload_metadata_to_workspaces.py` to:
+It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and_upload_metadata_to_workspaces.py` to:
 
 1. Read all CSV files for the given `release_directory` from the metadata GCS bucket
 2. Validate every CSV against its expected Pydantic schema (column presence, types, no extra columns)
@@ -30,6 +30,25 @@ It calls a single task (`CreateWorkspacesAndUploadMetadata`) which executes `cre
 | `force`               | Skip the table existence check and upload all data regardless of what is already in each workspace.                                                                                                                                                                                              | `Boolean`  | No       | `true`                                                                                      |
 | `dry_run`             | Log everything that would happen without actually creating workspaces, uploading metadata, or modifying ACLs.                                                                                                                                                                                    | `Boolean`  | No       | `false`                                                                                     |
 | `docker`              | Docker image to use for the task. If not provided, the latest production image is used.                                                                                                                                                                                                          | `String?`  | No       | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_quarterly_uploads:latest`  |
+| `questionnaire_manifest` | CSV with `file_path`/`survey` columns consumed by `sfc_questionnaire_analysis_pipeline.R` to group questionnaire CSVs into surveys. Omit this input to skip the questionnaire analysis and upload entirely. | `File?` | No | _(none — questionnaire analysis is skipped)_ |
+| `five_year_diagnosis` | Passed through to `sfc_questionnaire_analysis_pipeline.R` as `--five_year_diagnosis`, restricting the analysis to participants diagnosed since 2020. Only used when `questionnaire_manifest` is provided. | `Boolean` | No | `false` |
+| `r_docker`            | Docker image used for the `RunQuestionnaireAnalysis` task. If not provided, the latest production R image is used. | `String?` | No | `us-central1-docker.pkg.dev/operations-portal-427515/komen/komen_questionnaire_r:latest` |
+| `metadata_bucket`     | GCS bucket `RunQuestionnaireAnalysis` pulls the release's main dataset CSVs from. Must match `METADATA_BUCKET` in `constants.py`. | `String` | No | `fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f` |
+| `quarterly_releases_prefix` | GCS prefix under `metadata_bucket` that releases live under. Must match `QUARTERLY_RELEASES_PREFIX` in `constants.py`. | `String` | No | `shareforcures_quarterly_releases` |
+
+---
+
+## Optional: questionnaire analysis and summary upload
+
+When `questionnaire_manifest` is supplied, two additional tasks run after `CreateWorkspacesAndUploadMetadata`:
+
+1. **`RunQuestionnaireAnalysis`** downloads the release's main dataset CSVs from GCS into `Data/`, runs `sfc_questionnaire_analysis_pipeline.R` (in a dedicated R Docker image built from `Dockerfile.r`), and produces:
+   - `questionnaire_summary.csv` — one row per `category_key` (e.g. `gender_male`, `country_usa`) with `total` and `percentage` columns, computed from the same one-row-per-participant survey tables used for the docx summaries, over the full participant count for that survey (not just non-missing values)
+   - a `_summary.docx` per survey (unchanged from the original script)
+   - `data_collection_counts.txt` (unchanged)
+2. **`UploadQuestionnaireSummary`** uploads `questionnaire_summary.csv` to the main workspace's `questionnaire_summary_table` via a single batch upsert, using the same CSV-schema/Terra-upload path as every other table in this pipeline (`csv_schemas.QuestionnaireSummaryRow` → `convert_csv_rows_to_table_data`). It waits for `CreateWorkspacesAndUploadMetadata` so the main workspace is guaranteed to exist first.
+
+**Known limitation:** `category_key` is derived from the column name only (not the survey name), so two surveys with a same-named column would produce colliding keys as separate rows. Check `questionnaire_manifest.csv` for column name collisions across surveys before relying on this in production.
 
 ---
 
