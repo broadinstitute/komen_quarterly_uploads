@@ -158,7 +158,8 @@ excluded_id_columns <- c("patient_id", "task_id", "task_version", "patient_task_
 questionnaire_summary <- map_dfr(names(survey_tables), function(survey_name) {
   df <- survey_tables[[survey_name]]
   variables <- setdiff(names(df), excluded_id_columns)
-  map_dfr(variables, ~ summarize_variable(df, .x))
+  map_dfr(variables, ~ summarize_variable(df, .x)) %>%
+    mutate(survey_title = survey_name)
 })
 
 write_csv(questionnaire_summary, "questionnaire_summary.csv")

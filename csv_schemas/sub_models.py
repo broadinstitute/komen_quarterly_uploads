@@ -844,3 +844,4 @@ class QuestionnaireSummaryRow(CsvModel):
     category_key: str
     total: int
     percentage: float
+    survey_title: str
