@@ -46,6 +46,8 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
    - `questionnaire_summary.csv` — one row per `category_key` (e.g. `gender_male`, `country_usa`) with `total` and `percentage` columns, computed from the same one-row-per-participant survey tables used for the docx summaries, over the full participant count for that survey (not just non-missing values)
    - a `_summary.docx` per survey (unchanged from the original script)
    - `data_collection_counts.txt` (unchanged)
+
+   All of these outputs are also copied to the root of the `metadata_bucket` (the operational workspace bucket), overwriting any copies from a previous release.
 2. **`UploadQuestionnaireSummary`** uploads `questionnaire_summary.csv` to the main workspace's `questionnaire_summary_table` via a single batch upsert, using the same CSV-schema/Terra-upload path as every other table in this pipeline (`csv_schemas.QuestionnaireSummaryRow` → `convert_csv_rows_to_table_data`). It waits for `CreateWorkspacesAndUploadMetadata` to finish so the main workspace is guaranteed to exist first, but is a no-op (no upload attempted) when `workspace_scope` is `sub` — this table only ever belongs to the main workspace.
 
 Both run unconditionally (not gated by `workspace_scope` via an `if` block in the WDL) so their outputs are always real values, never an optional/possibly-absent one — see below for why that matters.
