@@ -59,7 +59,7 @@ workflow IngestKomenSamples {
 			dry_run = dry_run,
 			docker_name = docker_name,
 			billing_project = billing_project,
-			wait_for = CreateWorkspacesAndUploadMetadata.done
+
 	}
 
 	# Placed last and fed UploadQuestionnaireSummary's result (unused in the command, just to
