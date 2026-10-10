@@ -841,6 +841,8 @@ class Visit(CsvModel):
 
 class QuestionnaireSummaryRow(CsvModel):
     """Model for questionnaire_summary.csv (produced by sfc_questionnaire_analysis_pipeline.R)"""
-    category_key: str
+    question: str
+    response: str
     total: int
     percentage: float
+    survey_title: str

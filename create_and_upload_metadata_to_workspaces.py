@@ -631,6 +631,9 @@ def main():
 
     if not any_workspace_needs_upload:
         logging.info("All workspaces already have all expected tables — nothing to upload.")
+        # The WDL declares MAPPING_FAILURES_FILENAME as a task output, so it must exist even
+        # when we return early (no mapping was attempted, so it is empty).
+        open(MAPPING_FAILURES_FILENAME, "w").close()
         leave_created_workspaces(
             main_workspace=main_workspace_terra_obj,
             sub_workspaces=sub_workspaces,

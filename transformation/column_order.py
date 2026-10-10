@@ -305,7 +305,7 @@ TABLE_COLUMN_ORDER: dict[str, dict[str, list[str]]] = {
         ],
     },
     "questionnaire_summary": {
-        "shown": ["category_key", "total", "percentage"],
+        "shown": ["question", "response", "total", "percentage", "survey_title"],
     },
     "radiation_therapy": {
         "shown": [
