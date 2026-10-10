@@ -133,9 +133,11 @@ task RunQuestionnaireAnalysis {
 
 		Rscript /app/sfc_questionnaire_analysis_pipeline.R ~{if five_year_diagnosis then "--five_year_diagnosis" else ""}
 
-		# Copy the R script's outputs to the root of the operational workspace's bucket
-		# (metadata_bucket). These overwrite any outputs from a previous release.
-		gsutil -m cp questionnaire_summary.csv data_collection_counts.txt *_summary.docx "gs://~{metadata_bucket}/"
+		# Copy the R script's outputs to a per-release folder in the operational workspace's bucket
+		# (metadata_bucket) so each release's outputs are kept rather than overwritten. Deliberately
+		# NOT under quarterly_releases_prefix/release_directory/, since the *.csv copy above reads
+		# that folder and would pick up questionnaire_summary.csv as if it were a release CSV.
+		gsutil -m cp questionnaire_summary.csv data_collection_counts.txt *_summary.docx "gs://~{metadata_bucket}/questionnaire_analysis_outputs/~{release_directory}/"
 	>>>
 
 	output {
