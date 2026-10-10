@@ -46,6 +46,7 @@ from utilities import (
     get_main_workspace_name,
     load_release_notes,
     build_sub_workspace_description,
+    build_main_workspace_description,
 )
 from validation.dataset_validator import DatasetValidator
 from validation.participant_validator import ParticipantValidation
@@ -258,12 +259,16 @@ def process_main_workspace(
         participant_files: Pre-checked dict of participant_id -> {file_type: path_or_None}
                            as returned by GenomicsFileChecker.check_all_participants().
         participant_ids: Set of all participant IDs
-        release_notes_content: Contents of the release's release_notes.md, if present, to set as description.
+        release_notes_content: Contents of the release's release_notes.md, if present, used as the start of the description.
         dry_run: If True, log what would be uploaded without actually uploading.
         skip_acl: If True, skip granting KOMEN_SUPER_ADMINS_GROUP_EMAIL and RESEARCH_ADMIN_GROUP_EMAIL owner access.
     """
-    if release_notes_content:
-        workspace_manager.set_workspace_description(terra_workspace_obj, release_notes_content)
+    main_workspace_description = build_main_workspace_description(
+        billing_project=terra_workspace_obj.billing_project,
+        workspace_name=terra_workspace_obj.workspace_name,
+        release_notes_content=release_notes_content,
+    )
+    workspace_manager.set_workspace_description(terra_workspace_obj, main_workspace_description)
 
     if dry_run:
         logging.info(f"DRY RUN: Would grant OWNER access to '{KOMEN_SUPER_ADMINS_GROUP_EMAIL}' on workspace '{terra_workspace_obj.workspace_name}'")
