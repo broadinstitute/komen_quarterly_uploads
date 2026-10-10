@@ -82,6 +82,26 @@ def build_sub_workspace_description(
     return description
 
 
+def build_main_workspace_description(
+    billing_project: str,
+    workspace_name: str,
+    release_notes_content: Optional[str],
+) -> str:
+    """
+    Build the main workspace description: the release-specific release_notes.md contents (if any),
+    followed by a sentence pointing to the questionnaire_summary_table with a link to this
+    workspace's Data tab.
+    """
+    data_tab_url = f"https://app.terra.bio/#workspaces/{billing_project}/{workspace_name}/data"
+    questionnaire_summary_note = (
+        "To view a high-level summary of the SFC questionnaires, use the "
+        f"questionnaire_summary_table found in the Data tab [here]({data_tab_url})"
+    )
+    if release_notes_content:
+        return f"{release_notes_content.strip()}\n\n{questionnaire_summary_note}"
+    return questionnaire_summary_note
+
+
 def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
     """
     Derive the Terra workspace name for a sub dataset.
