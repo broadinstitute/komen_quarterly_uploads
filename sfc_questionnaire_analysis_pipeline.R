@@ -131,7 +131,7 @@ for (survey_name in names(survey_tables)) {
     gtsave(paste0(survey_name, "_summary.docx"))
 }
 
-# Build a tidy category_key/total/percentage table for every survey, suitable for a Terra
+# Build a tidy question/response/total/percentage table for every survey, suitable for a Terra
 # table upload. Uses the same one-row-per-participant survey_tables and excluded ID columns
 # as the docx summary tables above, so the two outputs describe the same underlying counts.
 clean_token <- function(x) {
@@ -147,10 +147,11 @@ summarize_variable <- function(df, variable) {
     mutate(.value = clean_token(.data[[variable]])) %>%
     count(.value, name = "total") %>%
     mutate(
-      category_key = paste0(clean_token(variable), "_", .value),
+      question = clean_token(variable),
+      response = .value,
       percentage = round(total / n_total * 100, 1)
     ) %>%
-    select(category_key, total, percentage)
+    select(question, response, total, percentage)
 }
 
 excluded_id_columns <- c("patient_id", "task_id", "task_version", "patient_task_id")
