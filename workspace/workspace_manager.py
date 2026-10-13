@@ -1,5 +1,6 @@
 """Terra workspace management."""
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -59,7 +60,15 @@ class WorkspaceManager:
 
     @staticmethod
     def _set_column_order_for_uploaded_tables(workspace: TerraWorkspace, table_names: list[str]) -> None:
-        """Set the Terra column order for all uploaded tables in a single call."""
+        """
+        Set the Terra column order for all uploaded tables in a single call.
+
+        Terra stores column order in one workspace attribute (workspace-column-defaults) and
+        set_table_column_order replaces the whole attribute, so the existing entries are read
+        first and merged with the new ones. Otherwise each upload (e.g. the questionnaire summary
+        upload, or a --force re-run of the main upload) would wipe the order for every table it
+        didn't upload.
+        """
         column_order_dict = {}
         for table_name in table_names:
             stem = table_name.removesuffix("_table")
@@ -73,10 +82,15 @@ class WorkspaceManager:
                 )
 
         if column_order_dict:
-            logging.info(
-                f"Setting column order for {len(column_order_dict)} table(s) in workspace '{workspace.workspace_name}'"
+            existing_attribute = workspace.get_workspace_info().json()["workspace"]["attributes"].get(
+                "workspace-column-defaults"
             )
-            workspace.set_table_column_order(column_order=column_order_dict)
+            merged_column_order = {**(json.loads(existing_attribute) if existing_attribute else {}), **column_order_dict}
+            logging.info(
+                f"Setting column order for {len(column_order_dict)} table(s) in workspace "
+                f"'{workspace.workspace_name}' ({len(merged_column_order)} total including existing)"
+            )
+            workspace.set_table_column_order(column_order=merged_column_order)
 
     def upload_table_data_to_workspace(
         self,
