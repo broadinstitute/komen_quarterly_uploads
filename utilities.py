@@ -27,11 +27,11 @@ _METADATA_FILE_PATTERN = re.compile(r"researcher_id_\d+_project_id_\d+_metadata\
 _RELEASE_DIRECTORY_DATE_PATTERN = re.compile(r"(\d{4})_(\d{2})$")
 
 
-def get_main_workspace_name(release_directory: str) -> str:
+def get_release_year_month(release_directory: str) -> tuple[str, str]:
     """
-    Derive the Terra main workspace name from the quarterly release directory name.
+    Parse the trailing YYYY_MM from the quarterly release directory name.
 
-    e.g. release_directory='shareforcures_dataset_2026_07' -> 'ShareForCures-Dataset-2026-07'
+    e.g. release_directory='shareforcures_dataset_2026_07' -> ('2026', '07')
     """
     match = _RELEASE_DIRECTORY_DATE_PATTERN.search(release_directory)
     if not match:
@@ -39,6 +39,16 @@ def get_main_workspace_name(release_directory: str) -> str:
             f"Could not parse a year_month suffix from release directory {release_directory!r}"
         )
     year, month = match.groups()
+    return year, month
+
+
+def get_main_workspace_name(release_directory: str) -> str:
+    """
+    Derive the Terra main workspace name from the quarterly release directory name.
+
+    e.g. release_directory='shareforcures_dataset_2026_07' -> 'ShareForCures-Dataset-2026-07'
+    """
+    year, month = get_release_year_month(release_directory)
     return MAIN_WORKSPACE_NAME_TEMPLATE.format(year=year, month=month)
 
 
@@ -82,20 +92,13 @@ def build_sub_workspace_description(
     return description
 
 
-def format_workspace_name(project_name: str, date_created: str, researcher_id: int) -> str:
+def format_workspace_name(project_name: str, researcher_id: int, year: str, month: str) -> str:
     """
     Derive the Terra workspace name for a sub dataset.
-    """
-    if '-' in date_created:
-        parts = date_created.split('-')
-        year = parts[0]
-        month = parts[1] if len(parts) > 1 else '01'
-    else:
-        # Fall back to the current month if the date cannot be parsed
-        now = datetime.now()
-        year = now.strftime('%Y')
-        month = now.strftime('%m')
 
+    year/month come from the release directory name (see get_release_year_month), so every
+    sub workspace in a release shares the same YYYY_MM suffix as the main workspace.
+    """
     # Replace spaces and special characters so the name is a valid Terra workspace identifier
     clean_project_name = re.sub(r'[^\w-]', '_', project_name)
     return SUB_WORKSPACE_NAME.format(
@@ -109,6 +112,7 @@ def format_workspace_name(project_name: str, date_created: str, researcher_id: i
 def parse_csv_paths_to_dataset_info(
     all_csv_paths: list[str],
     gcp: GCPCloudFunctions,
+    release_directory: str,
     include_workspaces: Optional[list[str]] = None,
     exclude_workspaces: Optional[list[str]] = None,
 ) -> DatasetInfo:
@@ -124,6 +128,8 @@ def parse_csv_paths_to_dataset_info(
     Args:
         all_csv_paths: Full list of GCS paths to process.
         gcp: Shared GCPCloudFunctions instance.
+        release_directory: Quarterly release directory name, e.g. 'shareforcures_dataset_2026_07'.
+            Its YYYY_MM suffix is used as the date in every sub workspace name.
         include_workspaces: Optional list of sub workspace names to include.
             When provided, only sub datasets whose derived workspace_name appears in
             this list are kept. Any name not matched raises a ValueError.
@@ -132,6 +138,7 @@ def parse_csv_paths_to_dataset_info(
             A warning is logged for any name in the list that was not found.
     """
     sub_pattern = re.compile(r'/researcher_id_(\d+)_project_id_(\d+)/')
+    release_year, release_month = get_release_year_month(release_directory)
 
     # Read all files in one multithreaded call
     all_file_contents: dict[str, str] = gcp.read_files_multithreaded(full_paths=all_csv_paths)
@@ -178,18 +185,19 @@ def parse_csv_paths_to_dataset_info(
                 date_created = rows[0].get("date_created", "").strip() or None
                 break
 
-        # Derive the workspace name immediately once both fields are available
-        if project_name and date_created:
+        # Derive the workspace name immediately once project_name is available. The date
+        # portion comes from the release directory, not the metadata CSV's date_created.
+        if project_name:
             workspace_name = format_workspace_name(
                 project_name=project_name,
-                date_created=date_created,
                 researcher_id=researcher_id,
+                year=release_year,
+                month=release_month,
             )
         else:
             logging.warning(
                 f"researcher_id_{researcher_id}_project_id_{project_id}: "
-                f"could not derive workspace_name — "
-                f"project_name={project_name!r}, date_created={date_created!r}"
+                f"could not derive workspace_name — project_name is missing"
             )
 
         # Skip workspaces explicitly excluded by the caller
@@ -260,6 +268,7 @@ def list_bucket_path_and_parse_dataset_info(
     dataset_info = parse_csv_paths_to_dataset_info(
         all_csv_paths,
         gcp,
+        release_directory=release_directory,
         include_workspaces=include_workspaces,
         exclude_workspaces=exclude_workspaces,
     )
