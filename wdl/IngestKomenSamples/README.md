@@ -14,7 +14,7 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
 6. Skip any workspace where all expected tables already exist (unless `--force` is set)
 7. Convert each CSV's rows through its schema model (coercing types, normalising booleans, etc.) and upload all tables to the appropriate workspace in a single batch upsert call
 8. Build a `sequencing_files_table` from GCS genomics file paths (CRAM, CRAI, GVCF, VCF, QC metrics) for workspaces whose researcher has genomics file access
-9. Grant each researcher READER access to their sub workspace and add them to the genomics access group where applicable
+9. Grant each sub workspace's auth-domain group (which contains the researcher) READER access to that workspace and add them to the genomics access group where applicable
 10. Record any participant or researcher ID mapping failures to `mapping_failures.txt` (and log each one) — this no longer fails the task itself; see below for why
 
 ---

@@ -323,7 +323,7 @@ def process_sub_workspaces(
     workspace_manager_obj: WorkspaceManager,
     all_participant_files: dict,
     genomics_access_metadata: list[dict],
-    researcher_email_lookup: dict[int, str],
+    auth_domain_by_workspace: dict[str, str],
     gcp: GCPCloudFunctions,
     workspaces_needing_upload: set[str],
     subworkspace_general_notes_template: str,
@@ -346,7 +346,9 @@ def process_sub_workspaces(
                                as returned by GenomicsFileChecker.check_all_participants().
                                Filtered per workspace inside this function.
         genomics_access_metadata: List of all researchers with clearance for genomics file access
-        researcher_email_lookup: Dict mapping researcher_id -> email for ACL grants
+        auth_domain_by_workspace: Dict mapping sub workspace name -> auth-domain group name. The
+            group (which contains the requesting researcher) is granted READER on the workspace,
+            so the researcher gets access through group membership rather than an individual grant.
         gcp: Shared GCPCloudFunctions instance
         workspaces_needing_upload: Set of workspace names that need uploading (pre-determined by caller)
         subworkspace_general_notes_template: General sub-workspace description template, with
@@ -356,7 +358,8 @@ def process_sub_workspaces(
         dry_run: If True, log what would be uploaded/modified without actually doing it.
 
     Returns:
-        List of mapping failure strings for any researcher IDs not found in the researcher mapping.
+        List of mapping failure strings. Currently always empty: missing researcher email
+        mappings are caught earlier by setup_sub_workspace_auth_domain_groups.
     """
     mapping_failures = []
 
@@ -423,29 +426,22 @@ def process_sub_workspaces(
             workspace_manager_obj.upload_table_data_to_workspace(sub_workspace_terra_obj, table_data)
             logging.info(f"Completed upload to {sub_dataset.workspace_name}: {len(table_data)} tables")
 
-        researcher_email = researcher_email_lookup.get(researcher_id)
-        if not researcher_email:
-            failure = (
-                f"Researcher ID '{researcher_id}' (workspace '{sub_dataset.workspace_name}') "
-                f"not found in researcher mapping ({RESEARCHER_ID_TO_EMAIL_MAPPING})"
-            )
-            mapping_failures.append(failure)
-            logging.warning(failure)
+        # Share with the auth-domain group rather than the researcher directly. The researcher is a
+        # MEMBER of this group (see setup_sub_workspace_auth_domain_groups), so they get READER
+        # through the group, and anyone added to the group later gets the same access.
+        auth_domain_group_email = f"{auth_domain_by_workspace[sub_dataset.workspace_name]}@firecloud.org"
         if dry_run:
-            if researcher_email:
-                logging.info(f"DRY RUN: Would grant READER access to '{researcher_email}' on workspace '{sub_dataset.workspace_name}'")
+            logging.info(f"DRY RUN: Would grant READER access to '{auth_domain_group_email}' on workspace '{sub_dataset.workspace_name}'")
             logging.info(f"DRY RUN: Would grant OWNER access to '{RESEARCH_ADMIN_GROUP_EMAIL}' on workspace '{sub_dataset.workspace_name}'")
         elif skip_acl:
             logging.info(f"SKIP ACL: Skipping workspace ACL grants for '{sub_dataset.workspace_name}'")
         else:
-            if researcher_email:
-                sub_workspace_terra_obj.update_user_acl(
-                    email=researcher_email,
-                    access_level="READER",
-                    can_share=False,
-                    can_compute=False,
-                    invite_users_not_found=True
-                )
+            sub_workspace_terra_obj.update_user_acl(
+                email=auth_domain_group_email,
+                access_level="READER",
+                can_share=False,
+                can_compute=False,
+            )
             sub_workspace_terra_obj.update_user_acl(email=RESEARCH_ADMIN_GROUP_EMAIL, access_level="OWNER")
 
     return mapping_failures
@@ -753,7 +749,7 @@ def main():
             workspace_manager_obj=workspace_manager,
             all_participant_files=all_participant_files,
             genomics_access_metadata=genomics_access_contents,
-            researcher_email_lookup=researcher_email_lookup,
+            auth_domain_by_workspace=sub_workspace_auth_domains,
             gcp=gcp,
             workspaces_needing_upload=sub_workspaces_needing_upload,
             subworkspace_general_notes_template=subworkspace_general_notes_template,
