@@ -67,15 +67,17 @@ def build_sub_workspace_description(
     subworkspace_general_notes_template: str,
     researcher_id: int,
     project_id: int,
+    project_title: str,
     release_notes_content: Optional[str],
 ) -> str:
     """
-    Fill the general sub-workspace notes template with this sub dataset's researcher_id and
-    project_id, then append the release-specific release_notes.md contents (if any) on a new line.
+    Fill the general sub-workspace notes template with this sub dataset's researcher_id,
+    project_id and project_title, then append the release-specific release_notes.md contents (if any) on a new line.
     """
     description = subworkspace_general_notes_template.format(
         researcher_id=researcher_id,
         research_project_id=project_id,
+        project_title=project_title,
     )
     if release_notes_content:
         description = f"{description.rstrip()}\n{release_notes_content.strip()}"
