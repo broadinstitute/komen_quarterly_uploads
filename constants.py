@@ -11,7 +11,7 @@ METADATA_BUCKET = "fc-secure-4a43e11f-e9ae-40b4-a449-cdd8ec55b17f"
 QUARTERLY_RELEASES_PREFIX = "shareforcures_quarterly_releases"
 
 # General sub-workspace description template, shared by every sub workspace in every release.
-# Contains {researcher_id} and {research_project_id} placeholders to be filled in per sub dataset.
+# Contains {researcher_id}, {research_project_id} and {project_title} placeholders to be filled in per sub dataset.
 SUBWORKSPACE_GENERAL_RELEASE_NOTES_FILE = f"gs://{METADATA_BUCKET}/{QUARTERLY_RELEASES_PREFIX}/subworkspace_general_release_notes.md"
 # Optional per-release notes file. If present under a release directory, its contents become the
 # main workspace description and are appended to every sub workspace's description.

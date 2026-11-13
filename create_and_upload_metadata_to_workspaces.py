@@ -350,7 +350,7 @@ def process_sub_workspaces(
         gcp: Shared GCPCloudFunctions instance
         workspaces_needing_upload: Set of workspace names that need uploading (pre-determined by caller)
         subworkspace_general_notes_template: General sub-workspace description template, with
-            {researcher_id} and {research_project_id} placeholders filled in per sub dataset.
+            {researcher_id}, {research_project_id} and {project_title} placeholders filled in per sub dataset.
         release_notes_content: Contents of the release's release_notes.md, if present, appended
             to the description of every sub workspace.
         dry_run: If True, log what would be uploaded/modified without actually doing it.
@@ -382,6 +382,7 @@ def process_sub_workspaces(
             subworkspace_general_notes_template=subworkspace_general_notes_template,
             researcher_id=sub_dataset.researcher_id,
             project_id=sub_dataset.project_id,
+            project_title=sub_dataset.project_name,
             release_notes_content=release_notes_content,
         )
         workspace_manager_obj.set_workspace_description(sub_workspace_terra_obj, sub_workspace_description)
