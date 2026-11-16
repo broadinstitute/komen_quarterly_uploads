@@ -14,7 +14,7 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
 6. Skip any workspace where all expected tables already exist (unless `--force` is set)
 7. Convert each CSV's rows through its schema model (coercing types, normalising booleans, etc.) and upload all tables to the appropriate workspace in a single batch upsert call
 8. Build a `sequencing_files_table` from GCS genomics file paths (CRAM, CRAI, GVCF, VCF, QC metrics) for workspaces whose researcher has genomics file access
-9. Grant each researcher READER access to their sub workspace and add them to the genomics access group where applicable
+9. Grant each sub workspace's auth-domain group (which contains the researcher) READER access to that workspace and add them to the genomics access group where applicable
 10. Record any participant or researcher ID mapping failures to `mapping_failures.txt` (and log each one) — this no longer fails the task itself; see below for why
 
 ---
@@ -23,7 +23,7 @@ It calls a task (`CreateWorkspacesAndUploadMetadata`) which executes `create_and
 
 | Input Name            | Description                                                                                                                                                                                                                                                                                      | Type       | Required | Default                                                                                     |
 |-----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|----------|---------------------------------------------------------------------------------------------|
-| `release_directory`   | Quarterly release directory to process, e.g. `"shareforcures_dataset_2026_07"`. CSVs are read from `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/{release_directory}/`, and the main workspace name is derived from the `YYYY_MM` suffix of this directory name.                      | `String`   | Yes      | _(none)_                                                                                    |
+| `release_directory`   | Quarterly release directory to process, e.g. `"shareforcures_dataset_2026_07"`. CSVs are read from `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/{release_directory}/`, and the main and sub workspace names use the `YYYY_MM` suffix of this directory name.                      | `String`   | Yes      | _(none)_                                                                                    |
 | `workspace_scope`     | Which workspaces to create and upload to. `all` creates the main workspace and all sub workspaces. `main` creates only the main workspace. `sub` creates only sub workspaces (still reads main participants to validate sub participants are a subset).                                          | `String`   | No       | `"all"`                                                                                     |
 | `include_workspaces`  | Space-separated string of exact sub workspace names to create and upload (e.g. `"WorkspaceA WorkspaceB"`). When provided, only those sub workspaces are processed and all others are skipped. Any name not found in the dataset raises an error. Has no effect when `workspace_scope` is `main`. | `String?`  | No       | _(none — all sub workspaces are processed)_                                                 |
 | `exclude_workspaces`  | Space-separated string of exact sub workspace names to skip entirely (e.g. `"WorkspaceA WorkspaceB"`). Has no effect when `workspace_scope` is `main`. A warning is logged for any name not found in the dataset.                                                                                | `String?`  | No       | _(none — no sub workspaces are skipped)_                                                    |
@@ -88,7 +88,7 @@ Each quarterly release has its own subdirectory named with the pattern `sharefor
 shareforcures_quarterly_releases/shareforcures_dataset_2026_07/
 ```
 
-This directory name is what you supply as the `release_directory` workflow input. The `YYYY_MM` suffix is used to derive the main workspace name (`ShareForCures-Dataset-YYYY-MM`).
+This directory name is what you supply as the `release_directory` workflow input. The `YYYY_MM` suffix is used in the main workspace name (`ShareForCures-Dataset-YYYY-MM`) and in every sub workspace name (`..._{YYYY}_{MM}`).
 
 ### Main dataset CSVs
 
@@ -128,7 +128,7 @@ shareforcures_quarterly_releases/shareforcures_dataset_2026_07/researcher_id_62_
 ... (one file per expected table, plus the metadata CSV)
 ```
 
-The metadata CSV must contain at minimum a `project_name` column and a `date_created` column (`YYYY-MM` format). These values are used to derive the sub workspace name (`{project_name}_researcher_id_{researcher_id}_{YYYY}_{MM}`).
+The metadata CSV must contain at minimum a `project_name` column. It is used with the researcher ID and the release directory's `YYYY_MM` suffix to derive the sub workspace name (`{project_name}_researcher_id_{researcher_id}_{YYYY}_{MM}`). The `date_created` column is not used for naming.
 
 > **Note:** `patient_enrollment_status.csv` is expected to be present in each sub directory for completeness, but its contents are only uploaded to the **main** workspace — it is ignored when uploading sub workspace tables.
 
@@ -163,7 +163,7 @@ If any validation fails the script exits before creating or modifying any worksp
 
 ### 3. Create Terra workspaces and auth-domain groups
 - The main workspace is named `ShareForCures-Dataset-YYYY-MM`, with `YYYY-MM` derived from the `release_directory` input
-- Sub workspaces are named `{project_name}_researcher_id_{researcher_id}_{YYYY}_{MM}` derived from the metadata CSV
+- Sub workspaces are named `{project_name}_researcher_id_{researcher_id}_{YYYY}_{MM}`, with `project_name` from the metadata CSV and `YYYY_MM` from the `release_directory` input
 - Each sub workspace gets a dedicated auth-domain group named `researcher_id_{researcher_id}_project_id_{project_id}_{hash}`. The requesting researcher is added as a `MEMBER`, and both `Research-Admins@firecloud.org` and `Komen-Super-Admins@firecloud.org` are added as `ADMIN`
 - All workspaces are created with `continue_if_exists=True` so re-runs are safe
 
