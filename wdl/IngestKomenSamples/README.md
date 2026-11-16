@@ -138,7 +138,7 @@ A general sub-workspace description template shared across all releases lives at
 ```
 shareforcures_quarterly_releases/subworkspace_general_release_notes.md
 ```
-This file must contain `{researcher_id}` and `{research_project_id}` placeholders which are filled in per sub workspace at upload time.
+This file must contain `{researcher_id}`, `{research_project_id}` and `{project_title}` placeholders which are filled in per sub workspace at upload time.
 
 ---
 
@@ -169,7 +169,7 @@ If any validation fails the script exits before creating or modifying any worksp
 
 ### 4. Set workspace descriptions
 - The release-specific `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/{release_directory}/release_notes.md` file, if present, is set as the main workspace description
-- Each sub workspace's description is built from the general `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/subworkspace_general_release_notes.md` template (with its `{researcher_id}` and `{research_project_id}` placeholders filled in), followed by that same release-specific `release_notes.md` appended on a new line if it exists
+- Each sub workspace's description is built from the general `gs://{METADATA_BUCKET}/shareforcures_quarterly_releases/subworkspace_general_release_notes.md` template (with its `{researcher_id}`, `{research_project_id}` and `{project_title}` placeholders filled in), followed by that same release-specific `release_notes.md` appended on a new line if it exists
 
 ### 5. Check whether uploads are needed
 Before any heavy processing, each workspace is checked for whether all its expected tables already exist. If they do (and `--force` is not set) that workspace is skipped entirely. This avoids re-processing when the script is re-run on an already-complete workspace.
